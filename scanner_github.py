@@ -1,3 +1,4 @@
+
 """
 NSE SWING SCANNER v8.5 - GITHUB ACTIONS VERSION
 Optimized for automated daily execution in GitHub Actions
@@ -4501,6 +4502,7 @@ def main():
     
     print(f"\n💾 OUTPUT: {SIGNALS_DIR}/")
     print("\n" + "="*120 + "\n")
+    return results
 
 # ============================================================================
 # ENTRY POINT
