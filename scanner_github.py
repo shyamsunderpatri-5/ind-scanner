@@ -1520,8 +1520,8 @@ class SectorRotationAnalyzer:
         self.sector_etfs = {
             'NIFTY_BANK': '^NSEBANK',
             'NIFTY_IT': 'NIFTYBEES.NS',
-            'NIFTY_AUTO': 'NIFTYAUTO.NS',
-            'NIFTY_PHARMA': 'NIFTYPHARMA.NS',
+            'NIFTY_AUTO': '^CNXAUTO',
+            'NIFTY_PHARMA': '^CNXPHARMA',
         }
         self.sector_strength = {}
     
@@ -4679,4 +4679,5 @@ def github_actions_main():
 # ============================================================================
 
 if __name__ == "__main__":
+
     sys.exit(github_actions_main())
