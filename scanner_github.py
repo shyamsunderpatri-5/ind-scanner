@@ -4612,7 +4612,7 @@ Running on GitHub Actions ⚡
 # ============================================================================
 
 def github_actions_main():
-    """Main function optimized for GitHub Actions execution"""
+    """Main function optimized for GitHub Actions execution - FIXED VERSION"""
     
     logger.info("="*80)
     logger.info("NSE SCANNER v8.5 - GITHUB ACTIONS EXECUTION")
@@ -4625,30 +4625,49 @@ def github_actions_main():
     start_time = time.time()
     
     try:
-        # Run the scanner (call your main() function or scanner logic)
         logger.info("🚀 Starting stock scan...")
         
-        # Call your original main() function
-        # Replace this with actual call to your scanner
-        results = main()  # This should be your scanner's main function
+        # ✅ FIX: main() already returns results
+        results = main()
         
         scan_time = time.time() - start_time
         
-        if results:
+        # ✅ FIX: Check if results exist AND have data
+        if results and len(results) > 0:
             logger.info(f"✅ Scan complete: {len(results)} signals found in {scan_time:.1f}s")
             
-            # Find the latest CSV and HTML files
-            csv_files = sorted([f for f in os.listdir(SIGNALS_DIR) if f.endswith('.csv')])
-            html_files = sorted([f for f in os.listdir(SIGNALS_DIR) if f.endswith('.html')])
+            # ✅ FIX: Use correct directory name
+            signals_dir = f"signals_v8.5_{ACCURACY_MODE.lower()}"
+            logger.info(f"📂 Looking for files in: {signals_dir}/")
             
-            csv_file = os.path.join(SIGNALS_DIR, csv_files[-1]) if csv_files else None
-            html_file = os.path.join(SIGNALS_DIR, html_files[-1]) if html_files else None
+            # Find the latest files
+            csv_file = None
+            html_file = None
             
-            # Send email notification
+            if os.path.exists(signals_dir):
+                csv_files = sorted([f for f in os.listdir(signals_dir) if f.endswith('.csv')])
+                html_files = sorted([f for f in os.listdir(signals_dir) if f.endswith('.html')])
+                
+                if csv_files:
+                    csv_file = os.path.join(signals_dir, csv_files[-1])
+                    logger.info(f"📄 Found CSV: {csv_file}")
+                
+                if html_files:
+                    html_file = os.path.join(signals_dir, html_files[-1])
+                    logger.info(f"📄 Found HTML: {html_file}")
+                
+                # ✅ Copy files to standard location for artifacts
+                copy_files_to_output(signals_dir)
+            else:
+                logger.warning(f"⚠️  Directory not found: {signals_dir}")
+            
+            # ✅ Send email with files
+            logger.info("📧 Sending email notification...")
             send_email_notification(results, csv_file, html_file, scan_time)
             
         else:
             logger.info(f"⚠️  No signals found in {scan_time:.1f}s")
+            send_no_signals_email(scan_time)
         
         logger.info("="*80)
         logger.info("✅ GitHub Actions execution completed successfully")
@@ -4659,10 +4678,10 @@ def github_actions_main():
     except Exception as e:
         logger.error(f"❌ FATAL ERROR: {e}", exc_info=True)
         
-        # Send error notification email
+        # Send error notification
         if EMAIL_CONFIG['enabled'] and EMAIL_CONFIG['sender_email']:
             try:
-                msg = MIMEText(f"Scanner failed with error:\n\n{str(e)}\n\nCheck GitHub Actions logs for details.")
+                msg = MIMEText(f"Scanner error:\n\n{str(e)}\n\nCheck logs.")
                 msg['Subject'] = "⚠️ NSE Scanner Error"
                 msg['From'] = EMAIL_CONFIG['sender_email']
                 msg['To'] = EMAIL_CONFIG['recipient_email']
@@ -4676,6 +4695,90 @@ def github_actions_main():
         
         return 1
 
+
+def send_no_signals_email(scan_time):
+    """Send notification when no signals found"""
+    
+    if not EMAIL_CONFIG['enabled'] or not EMAIL_CONFIG['sender_email']:
+        logger.info("Email not configured")
+        return
+    
+    try:
+        body = f"""
+NSE SWING SCANNER v8.5 - DAILY REPORT
+{'='*70}
+
+Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+Scan Time: {scan_time:.1f} seconds
+Mode: {ACCURACY_MODE}
+
+⚠️  NO TRADING SIGNALS FOUND TODAY
+
+The scanner ran successfully but no stocks met the entry criteria.
+
+Possible reasons:
+- Market conditions unfavorable
+- All setups filtered by quality checks
+- Weekend/holiday (stale data)
+- High volatility regime
+
+{'='*70}
+
+Next scan: Tomorrow at 4:00 PM IST
+
+This is an automated message from NSE Scanner v8.5
+"""
+        
+        msg = MIMEText(body)
+        msg['Subject'] = f"📊 NSE Scanner - {datetime.now().strftime('%Y-%m-%d')} - No Signals"
+        msg['From'] = EMAIL_CONFIG['sender_email']
+        msg['To'] = EMAIL_CONFIG['recipient_email']
+        
+        with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as server:
+            server.starttls()
+            server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+            server.send_message(msg)
+        
+        logger.info("✅ No-signals email sent successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Email send failed: {e}")
+
+
+def copy_files_to_output(source_dir):
+    """Copy signal files to standard output directory for GitHub Actions"""
+    
+    try:
+        # Create standard output directory
+        output_dir = "signals"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        if not os.path.exists(source_dir):
+            logger.warning(f"Source directory not found: {source_dir}")
+            return
+        
+        import shutil
+        copied = 0
+        
+        # Copy all CSV and HTML files
+        for filename in os.listdir(source_dir):
+            if filename.endswith(('.csv', '.html')):
+                src_path = os.path.join(source_dir, filename)
+                dst_path = os.path.join(output_dir, filename)
+                
+                shutil.copy2(src_path, dst_path)
+                logger.info(f"📋 Copied: {filename}")
+                copied += 1
+        
+        logger.info(f"✅ Copied {copied} files to {output_dir}/")
+        
+        # Also copy logs
+        if os.path.exists('logs/scanner.log'):
+            shutil.copy2('logs/scanner.log', 'signals/scanner.log')
+            logger.info("📋 Copied: scanner.log")
+        
+    except Exception as e:
+        logger.error(f"⚠️  Failed to copy files: {e}")
 # ============================================================================
 # ENTRY POINT
 # ============================================================================
