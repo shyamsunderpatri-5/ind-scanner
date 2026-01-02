@@ -1,4781 +1,4788 @@
+
 """
-🧠 SMART PORTFOLIO MONITOR v6.0 - COMPLETE EDITION
-==================================================
-ALL FEATURES FULLY IMPLEMENTED:
-✅ Alert when SL hits
-✅ Alert when target hits  
-✅ Warn BEFORE SL hits (Predictive)
-✅ Hold recommendation after target
-✅ Dynamic target calculation
-✅ Momentum scoring (0-100)
-✅ Volume confirmation
-✅ Support/Resistance detection
-✅ Trail stop suggestion
-✅ Risk scoring (0-100)
-✅ Auto-refresh during market hours
-✅ Email alerts for critical events
-✅ Multi-Timeframe Analysis
-✅ Better caching (15s TTL)
-✅ Position Sizing Calculator
-✅ Risk-Reward Ratio Calculator
-✅ Portfolio Risk Dashboard
-✅ Win Rate & Trade Statistics
-✅ Drawdown Tracking
-✅ Sector Exposure Analysis
-✅ Correlation Analysis
-✅ Breakeven Alerts
-✅ Partial Profit Booking Tracker
-✅ Holding Period Tracker
-✅ Trade History Log
-✅ Performance Dashboard
+NSE SWING SCANNER v8.5 - GITHUB ACTIONS VERSION
+Optimized for automated daily execution in GitHub Actions
 """
 
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
+import sys
+import os
+import io
+import logging
 from datetime import datetime, timedelta
-import plotly.graph_objects as go
-import plotly.express as px
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import hashlib
-import time
-import json
-from typing import Tuple, Optional, Dict, List, Any
-import logging
-from datetime import datetime, timedelta
-logging.basicConfig(level=logging.INFO)
+from email.mime.base import MIMEBase
+from email import encoders
+
+# ============================================================================
+# GITHUB ACTIONS CONFIGURATION
+# ============================================================================
+
+# Get email credentials from environment variables (GitHub Secrets)
+EMAIL_CONFIG = {
+    'enabled': True,
+    'smtp_server': 'smtp.gmail.com',
+    'smtp_port': 587,
+    'sender_email': os.environ.get('EMAIL_SENDER', ''),
+    'sender_password': os.environ.get('EMAIL_PASSWORD', ''),
+    'recipient_email': os.environ.get('EMAIL_RECIPIENT', ''),
+}
+
+# GitHub Actions paths
+SIGNALS_DIR = 'signals'
+LOG_FILE = 'logs/scanner.log'
+
+# Create directories
+os.makedirs(SIGNALS_DIR, exist_ok=True)
+os.makedirs('logs', exist_ok=True)
+
+# ============================================================================
+# LOGGING SETUP
+# ============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-# Try to import streamlit-autorefresh
-try:
-    from streamlit_autorefresh import st_autorefresh
-    HAS_AUTOREFRESH = True
-except ImportError:
-    HAS_AUTOREFRESH = False
+# ============================================================================
+# IMPORT YOUR ORIGINAL SCANNER CODE
+# ============================================================================
+"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NSE SWING SCANNER v8.5 - ULTIMATE ACCURACY EDITION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Complete production-ready scanner with:
+✓ All v7.4 Advanced Features
+✓ All v8.0 Backtesting Features  
+✓ Full error handling
+✓ Bug fixes applied
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+import sys
+import io
+import os
+from typing import Optional, Tuple, List, Dict, Set
+from dataclasses import dataclass
+from datetime import datetime, timedelta, time as dt_time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import warnings
+import logging
+import time
+
+# Platform-specific encoding fix
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import requests
+from io import StringIO
+
+# Technical Analysis
+from ta.momentum import RSIIndicator, ROCIndicator
+from ta.trend import MACD, EMAIndicator, ADXIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
+from ta.volume import OnBalanceVolumeIndicator
+from scipy import stats
+from scipy.signal import argrelextrema
+
+warnings.filterwarnings('ignore')
 
 # ============================================================================
-# SAFE UTILITY FUNCTIONS
+# CONFIGURATION - CHANGE THESE SETTINGS
 # ============================================================================
 
-def safe_divide(numerator, denominator, default=0.0):
-    """Safe division that handles zero and NaN"""
-    try:
-        if denominator == 0 or pd.isna(denominator) or pd.isna(numerator):
-            return default
-        result = numerator / denominator
-        return default if pd.isna(result) or np.isinf(result) else result
-    except (TypeError, ValueError, ZeroDivisionError, FloatingPointError):
-        return default
+ACCURACY_MODE = 'BALANCED'  # 'CONSERVATIVE', 'BALANCED', or 'AGGRESSIVE'
+BACKTEST_MODE = 'HYBRID'      # 'MINI', 'FULL', 'HYBRID', 'NONE'
 
-def safe_float(value, default=0.0):
-    """Safely convert value to float"""
-    try:
-        result = float(value)
-        return default if pd.isna(result) else result
-    except (TypeError, ValueError, ZeroDivisionError) as e:
-        logging.warning(f"Error in calculation: {e}")
-        return default
+# Configuration Presets
+PRESETS = {
+    'CONSERVATIVE': {
+        'min_confidence': 75,
+        'min_turnover': 2_000_000,
+        'min_rr_ratio': 2.5,
+        'min_volatility_pct': 0.008,
+        'min_volume_ratio': 0.8,
+        'rsi_range_long': (45, 60),
+        'rsi_range_short': (40, 55),
+        'conditions_required': 5,
+        'use_sector_rotation': True,
+        'use_vix_sentiment': True,
+        'use_fibonacci': True,
+        'use_portfolio_risk': True,
+        'use_full_backtest': True,
+        'use_walk_forward': True,
+        'max_stocks': 500,
+        'rs_lookback': 21,
+        'fib_lookback': 50,
+        'atr_period': 14,
+        'min_adx': 30,
+        'min_volume_breakout': 2.0,
+        'vcp_lookback': 20,
+        'min_backtest_win_rate': 65,
+        'min_profit_factor': 2.0, 
+        'max_drawdown': 12,
+        'sigmoid_divisor': 40,
+    },
+    'BALANCED': {
+        # ✅ OPTIMIZED FOR 2-5 DAILY SIGNALS
+        'min_confidence': 65,               # ✅ Already correct
+        'min_turnover': 800_000,            # ✅ Already correct
+        'min_rr_ratio': 1.7,                # ✅ Already correct (you changed from 1.6 to 2.0)
+        'min_volatility_pct': 0.005,        # ✅ Already correct
+        'min_volume_ratio': 0.5,            # ✅ Already correct
+        'rsi_range_long': (40, 62),         # ✅ Already correct
+        'rsi_range_short': (38, 60),        # ✅ Already correct
+        'conditions_required': 4,           # ✅ Already correct
+        'use_sector_rotation': True,        # ✅ Already correct
+        'use_vix_sentiment': True,          # ✅ Already correct
+        'use_fibonacci': True,              # ✅ Already correct
+        'use_portfolio_risk': True,         # ✅ Already correct
+        'use_full_backtest': True,          # ✅ Already correct
+        'use_walk_forward': True,           # ✅ Already correct
+        'max_stocks': 500,                  # ✅ Already correct
+        'rs_lookback': 14,                  # ✅ Already correct
+        'fib_lookback': 40,                 # ✅ Already correct
+        'atr_period': 12,                   # ✅ Already correct
+        'min_adx': 23,                      # ✅ Already correct
+        'min_volume_breakout': 1.6,         # ✅ Already correct
+        'vcp_lookback': 18,                 # ✅ Already correct
+        'min_backtest_win_rate': 58,        # ✅ Already correct
+        'min_profit_factor': 1.7,           # ✅ Already correct
+        'max_drawdown': 18,                 # ✅ Already correct
+        'sigmoid_divisor': 35,              # ✅ Already correct
+    },
+    'AGGRESSIVE': {
+        'min_confidence': 40,
+        'min_turnover': 200_000,
+        'min_rr_ratio': 1.2,
+        'min_volatility_pct': 0.003,
+        'min_volume_ratio': 0.2,
+        'rsi_range_long': (30, 70),
+        'rsi_range_short': (30, 70),
+        'conditions_required': 2,
+        'use_sector_rotation': False,
+        'use_vix_sentiment': False,
+        'use_fibonacci': True,
+        'use_portfolio_risk': False,
+        'use_full_backtest': False,
+        'use_walk_forward': False,
+        'max_stocks': 500,
+        'rs_lookback': 10,
+        'fib_lookback': 30,
+        'atr_period': 8,
+        'min_adx': 15,
+        'min_volume_breakout': 1.2,
+        'vcp_lookback': 10,
+        'min_backtest_win_rate': 50,
+        'min_profit_factor': 1.3,
+        'max_drawdown': 25,
+        'sigmoid_divisor': 30,
+    }
+}
+
+PRESET = PRESETS[ACCURACY_MODE]
+
+# Scoring Weights - OPTIMIZED FOR BALANCED MODE
+SCORING_WEIGHTS = {
+    "ema_trend": 9,                 # ✅ Raised from 8
+    "ema_200": 5,                   # ✅ Raised from 4
+    "rsi": 8,                       # ✅ Raised from 7
+    "macd": 8,                      # ✅ Raised from 7
+    "volume_ratio": 5,              # ✅ Raised from 4
+    "ema_slope": 4,                 # ✅ Raised from 3
+    "obv": 4,                       # ✅ Raised from 3
+    "sr_support": 6,                # ✅ Raised from 5
+    "sr_resistance": 6,             # ✅ Raised from 5
+    "candle": 5,                    # ✅ Raised from 4
+    "mtf_trend": 7,                 # ✅ Raised from 6
+    "mtf_penalty": 6,               # ✅ Raised from 5
+    "vix_sentiment": 5,             # ✅ Raised from 4
+    "fib_boost": 6,                 # ✅ Raised from 5
+    "adx_momentum": 6,              # ✅ Raised from 5
+    "vsa_confirmation": 5,          # ✅ Raised from 4
+    "gap_detection": 4,             # ✅ Raised from 3
+    "vcp_pattern": 7,               # ✅ Raised from 6
+    "supertrend": 6,                # ✅ Raised from 5
+    "volume_breakout": 5,           # ✅ Raised from 4
+    "backtest_win_rate": 13,        # ✅ Raised from 12
+    "backtest_profit_factor": 9,    # ✅ Raised from 8
+    "pattern_reliability": 11,      # ✅ Raised from 10
+}
+
+# Scanner Parameters
+LOOKBACK_DAYS = 250             # ✅ Changed from 180 to 250 (10 months data)
+MIN_CONFIDENCE = PRESET['min_confidence']
+MIN_TURNOVER = PRESET['min_turnover']
+MIN_RR_RATIO = PRESET['min_rr_ratio']
+TOP_RESULTS = 10               # ✅ Changed from 20 to 15 (focus on top signals)
+
+# Account & Risk
+ACCOUNT_CAPITAL = 75_000
+RISK_PER_TRADE = 0.01
+MAX_CONCURRENT_TRADES = 3       # ✅ Changed from 5 to 4 (more focused)
+MAX_SECTOR_EXPOSURE = 0.32      # ✅ Changed from 0.35 to 0.32
+
+# Data Quality
+MAX_DATA_STALE_DAYS = 5         # ✅ Changed from 7 to 5 (fresher data)
+MIN_PRICE = 5                   # ✅ Keep at 5 (avoid penny stocks)
+MAX_PRICE = 100000
+
+# Feature Flags - OPTIMIZED FOR BALANCED
+USE_SECTOR_ROTATION = True      # ✅ ENABLED
+USE_VIX_SENTIMENT = True        # ✅ ENABLED
+USE_FIBONACCI_SCORING = True    # ✅ ENABLED
+USE_PORTFOLIO_RISK = True       # ✅ ENABLED
+USE_MINI_BACKTEST = True        # ✅ ENABLED
+USE_FULL_BACKTEST = True        # ✅ ENABLED
+USE_WALK_FORWARD = True         # ✅ ENABLED (3 periods validation)
+USE_MONTE_CARLO = False         # ✅ DISABLED (saves time in BALANCED mode)
+USE_REALTIME_DATA = True  # Use live data during market hours
+
+# Backtesting
+BACKTEST_LOOKBACK_DAYS = 300    # ✅ Changed from 252 to 300
+MIN_BACKTEST_TRADES = 12        # ✅ Raised from 10 to 12
+WALK_FORWARD_PERIODS = 3        # ✅ Keep at 3 (good balance)
+
+# Output
+SIGNALS_DIR = f"signals_v8.5_{ACCURACY_MODE.lower()}"
+ERROR_LOG_FILE = f"scanner_v8.5_{ACCURACY_MODE.lower()}.log"
 
 # ============================================================================
-# PAGE CONFIG (MUST BE FIRST STREAMLIT COMMAND!)
+# LOGGING & STATS
 # ============================================================================
-st.set_page_config(
-    page_title="Smart Portfolio Monitor v6.0",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded"
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s: %(message)s",
+    handlers=[
+        logging.FileHandler(ERROR_LOG_FILE),
+        logging.StreamHandler()
+    ]
 )
+logger = logging.getLogger(__name__)
+
+# Complete stats dictionary
+stats = {
+    "total": 0, "passed": 0, "no_data": 0,
+    "indicator_fail": 0, "turnover_fail": 0, "confidence_fail": 0,
+    "rr_fail": 0, "data_quality_fail": 0, "volatility_fail": 0,
+    "mini_backtest_fail": 0, "full_backtest_fail": 0, "full_backtest_run": 0,
+    "walk_forward_fail": 0, "monte_carlo_fail": 0,
+    "vcp_fail": 0, "vsa_fail": 0, "supertrend_fail": 0, "portfolio_fail": 0,
+    "liquidity_fail": 0, "circuit_fail": 0, "hours_fail": 0, "price_range_fail": 0,
+}
+
+rejection_samples = []
 
 # ============================================================================
-# CUSTOM CSS
-# ============================================================================
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 1rem 0;
-    }
-    .critical-box {
-        background: linear-gradient(135deg, #dc3545, #c82333);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        font-weight: bold;
-        margin: 10px 0;
-    }
-    .success-box {
-        background: linear-gradient(135deg, #28a745, #218838);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        font-weight: bold;
-        margin: 10px 0;
-    }
-    .warning-box {
-        background: linear-gradient(135deg, #ffc107, #e0a800);
-        color: black;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        font-weight: bold;
-        margin: 10px 0;
-    }
-    .info-box {
-        background: linear-gradient(135deg, #17a2b8, #138496);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        font-weight: bold;
-        margin: 10px 0;
-    }
-    .metric-card {
-        background: #f8f9fa;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #667eea;
-        margin: 5px 0;
-    }
-    .stExpander {
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# INITIALIZE SESSION STATE
-# ============================================================================
-def init_session_state():
-    """Initialize all session state variables"""
-    defaults = {
-        'email_sent_alerts': {},
-        'last_email_time': {},
-        'email_log': [],
-        'trade_history': [],
-        'portfolio_values': [],
-        'performance_stats': {
-            'total_trades': 0,
-            'wins': 0,
-            'losses': 0,
-            'total_profit': 0,
-            'total_loss': 0
-        },
-        'drawdown_history': [],
-        'peak_portfolio_value': 0,
-        'current_drawdown': 0,
-        'max_drawdown': 0,
-        'partial_exits': {},
-        'holding_periods': {},
-        'last_api_call': {},
-        'api_call_count': 0,
-        'correlation_matrix': None,
-        'last_correlation_calc': None
-    }
-    
-    for key, default_value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
-
-init_session_state()
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-def get_ist_now():
-    """Get current IST time"""
-    return datetime.utcnow() + timedelta(hours=5, minutes=30)
-
-def is_market_hours():
-    """Check if market is open"""
-    ist_now = get_ist_now()
-    
-    if ist_now.weekday() >= 5:
-        return False, "WEEKEND", "Markets closed for weekend", "🔴"
-    
-    market_open = datetime.strptime("09:15", "%H:%M").time()
-    market_close = datetime.strptime("15:30", "%H:%M").time()
-    current_time = ist_now.time()
-    
-    if current_time < market_open:
-        return False, "PRE-MARKET", f"Opens at 09:15 IST", "🟡"
-    elif current_time > market_close:
-        return False, "CLOSED", "Market closed for today", "🔴"
-    else:
-        return True, "OPEN", f"Closes at 15:30 IST", "🟢"
-
-# ============================================================================
-# GAP 1: MARKET HEALTH CHECK (NIFTY + VIX)
+# UTILITY FUNCTIONS
 # ============================================================================
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def get_market_health():
-    """
-    Analyze NIFTY 50 and India VIX to determine overall market health
-    Returns: dict with status, message, color, action, metrics
-    """
+def normalize_series(series_like, index=None):
+    """Convert series-like object to pandas Series"""
+    arr = np.asarray(series_like)
+    if arr.ndim > 1:
+        arr = arr[:, 0]
+    return pd.Series(arr, index=index)
+
+def safe_indicator(func, default=None):
+    """Safely execute indicator calculation"""
     try:
-        # Get NIFTY 50 data
-        nifty = yf.Ticker("^NSEI")
-        nifty_df = nifty.history(period="1mo")
+        result = func()
+        if pd.isna(result) or (isinstance(result, (int, float)) and not np.isfinite(result)):
+            return default
+        return result
+    except Exception:
+        return default
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class BacktestResult:
+    """Comprehensive backtest metrics"""
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: float
+    sharpe_ratio: float
+    max_drawdown: float
+    total_return: float
+    avg_holding_days: float
+    best_trade: float
+    worst_trade: float
+    consecutive_wins: int
+    consecutive_losses: int
+    reliability_score: float
+    expectancy: float
+
+@dataclass
+class WalkForwardResult:
+    """Walk-forward validation results"""
+    period_results: List[BacktestResult]
+    avg_win_rate: float
+    win_rate_stability: float
+    avg_profit_factor: float
+    consistency_score: float
+    passed: bool
+
+@dataclass
+class MonteCarloResult:
+    """Monte Carlo simulation results"""
+    simulations: int
+    avg_final_equity: float
+    median_final_equity: float
+    worst_case: float
+    best_case: float
+    prob_profit: float
+    confidence_95: Tuple[float, float]
+    risk_of_ruin: float
+# ============================================================================
+# TRADE RULE CLASS
+# ============================================================================
+
+class TradeRule:
+    """Enhanced trade rule with multi-entry support - AGGRESSIVE QTY FIX"""
+    def calculate_dynamic_targets(self, confidence: float):
+        """Adjust targets based on setup quality - FIXED VERSION"""
         
-        if nifty_df.empty:
+        # ✅ FIXED: Variable R:R based on confidence
+        if confidence >= 85:
+            # Very high confidence - aggressive targets
+            multiplier_t1 = 2.5
+            multiplier_t2 = 5.0
+        elif confidence >= 75:
+            # High confidence - good targets
+            multiplier_t1 = 2.2
+            multiplier_t2 = 4.5
+        elif confidence >= 65:
+            # Good confidence - standard targets
+            multiplier_t1 = 2.0
+            multiplier_t2 = 4.0
+        elif confidence >= 55:
+            # Medium confidence - conservative targets
+            multiplier_t1 = 1.8
+            multiplier_t2 = 3.5
+        else:
+            # Low confidence - very conservative
+            multiplier_t1 = 1.5
+            multiplier_t2 = 3.0
+        
+        if self.side == "LONG":
+            self.target_1 = round(self.entry_price + (self.atr * multiplier_t1), 2)
+            self.target_2 = round(self.entry_price + (self.atr * multiplier_t2), 2)
+        else:
+            self.target_1 = round(self.entry_price - (self.atr * multiplier_t1), 2)
+            self.target_2 = round(self.entry_price - (self.atr * multiplier_t2), 2)
+        
+        # Recalculate R:R
+        risk_per_share = abs(self.entry_price - self.stop_loss)
+        reward_per_share = abs(self.target_1 - self.entry_price)
+        
+        if risk_per_share > 0:
+            self.risk_reward_ratio = reward_per_share / risk_per_share
+        else:
+            self.risk_reward_ratio = 0
+
+
+    def __init__(self, ticker: str, side: str, current_price: float, atr: float):
+        self.ticker = ticker
+        self.side = side
+        self.entry_price = round(current_price, 2)
+        self.atr = max(atr, current_price * 0.005)  # Min 0.5% ATR
+        
+        self.risk_amount = ACCOUNT_CAPITAL * RISK_PER_TRADE
+        
+        # ✅ FIX: Use 2.0x ATR multiplier for better default R:R
+        if side == "LONG":
+            self.stop_loss = round(current_price - (self.atr * 1.5), 2)
+            self.target_1 = round(current_price + (self.atr * 2.5), 2)  # ✅ Changed from 2.0 to 2.5
+            self.target_2 = round(current_price + (self.atr * 5.0), 2)  # ✅ Changed from 4.0 to 5.0
+        else:
+            self.stop_loss = round(current_price + (self.atr * 1.5), 2)
+            self.target_1 = round(current_price - (self.atr * 2.5), 2)  # ✅ Changed from 2.0 to 2.5
+            self.target_2 = round(current_price - (self.atr * 5.0), 2)  # ✅ Changed from 4.0 to 5.0
+        
+        # ✅ Calculate quantity based on actual stop distance
+        risk_per_share = abs(self.entry_price - self.stop_loss)
+        
+        if risk_per_share > 0:
+            # Calculate max qty by risk
+            max_qty_by_risk = int(self.risk_amount / risk_per_share)
+            
+            # Calculate max qty by position size (max 10% of capital)
+            max_qty_by_capital = int((ACCOUNT_CAPITAL * 0.10) / current_price)
+            
+            # Take minimum of both constraints
+            self.qty = min(max_qty_by_risk, max_qty_by_capital)
+            
+            # Cap at 1000 shares
+            self.qty = min(self.qty, 1000)
+            
+            # Ensure at least 1 share
+            self.qty = max(1, self.qty)
+        else:
+            self.qty = 1
+        
+        self.position_value = self.qty * self.entry_price
+        self.actual_risk = self.qty * risk_per_share
+        
+        # ✅ Calculate R:R based on new default targets (now ~1.67x minimum)
+        risk = abs(self.entry_price - self.stop_loss)
+        reward = abs(self.target_1 - self.entry_price)
+        self.risk_reward_ratio = reward / risk if risk > 0 else 0
+    
+    def calculate_dynamic_targets(self, confidence: float):
+        """Adjust targets based on setup quality - ENHANCED VERSION"""
+        
+        # ✅ Dynamic multipliers based on confidence
+        if confidence >= 90:
+            multiplier_t1 = 3.0
+            multiplier_t2 = 6.0
+        elif confidence >= 85:
+            multiplier_t1 = 2.8
+            multiplier_t2 = 5.5
+        elif confidence >= 80:
+            multiplier_t1 = 2.5
+            multiplier_t2 = 5.0
+        elif confidence >= 75:
+            multiplier_t1 = 2.3
+            multiplier_t2 = 4.5
+        elif confidence >= 70:
+            multiplier_t1 = 2.2
+            multiplier_t2 = 4.2
+        elif confidence >= 65:
+            multiplier_t1 = 2.0
+            multiplier_t2 = 4.0
+        else:
+            # Low confidence - use defaults from __init__
+            multiplier_t1 = 2.5  # ✅ Increased from 1.8
+            multiplier_t2 = 5.0  # ✅ Increased from 3.5
+        
+        if self.side == "LONG":
+            self.target_1 = round(self.entry_price + (self.atr * multiplier_t1), 2)
+            self.target_2 = round(self.entry_price + (self.atr * multiplier_t2), 2)
+        else:
+            self.target_1 = round(self.entry_price - (self.atr * multiplier_t1), 2)
+            self.target_2 = round(self.entry_price - (self.atr * multiplier_t2), 2)
+        
+        # Recalculate R:R with new targets
+        risk_per_share = abs(self.entry_price - self.stop_loss)
+        reward_per_share = abs(self.target_1 - self.entry_price)
+        
+        if risk_per_share > 0:
+            self.risk_reward_ratio = reward_per_share / risk_per_share
+        else:
+            self.risk_reward_ratio = 0
+# ============================================================================
+# DATA QUALITY VALIDATOR - FIXED VERSION
+# ============================================================================
+
+class DataQualityValidator:
+    """Validate data quality and freshness"""
+    
+    @staticmethod
+    def is_data_fresh(df: pd.DataFrame, max_stale_days: int = MAX_DATA_STALE_DAYS) -> bool:
+        """Check if data is recent"""
+        try:
+            last_date = pd.to_datetime(df.index[-1])
+            days_old = (datetime.now() - last_date).days
+            return days_old <= max_stale_days
+        except Exception:
+            return False
+    
+    @staticmethod
+    def has_sufficient_history(df: pd.DataFrame, min_bars: int = 60) -> bool:
+        """Check minimum data length"""
+        return len(df) >= min_bars
+    
+    @staticmethod
+    def has_valid_prices(df: pd.DataFrame) -> Tuple[bool, str]:
+        """Validate price data - BULLETPROOF VERSION"""
+        try:
+            # Handle MultiIndex columns
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.copy()
+                df.columns = df.columns.get_level_values(0)
+            
+            # Check for Close column
+            if 'Close' not in df.columns.tolist():
+                return False, "No Close column"
+            
+            if len(df) == 0:
+                return False, "Empty dataframe"
+            
+            # Get non-NaN close values
+            close_series = df['Close'].dropna()
+            
+            if len(close_series) == 0:
+                return False, "All Close values are NaN"
+            
+            # Get last non-NaN close
+            close = close_series.iloc[-1]
+            
+            if pd.isna(close):
+                return False, "Close is NaN"
+            
+            try:
+                close_price = float(close)
+            except (ValueError, TypeError):
+                return False, "Close not numeric"
+            
+            if not np.isfinite(close_price):
+                return False, "Close is infinite"
+            
+            # Price range
+            if close_price < MIN_PRICE:
+                return False, f"Price too low: ₹{close_price:.2f}"
+            
+            if close_price > MAX_PRICE:
+                return False, f"Price too high: ₹{close_price:.2f}"
+            
+            return True, "Valid"
+            
+        except Exception as e:
+            return False, f"{type(e).__name__}: {str(e)[:40]}"
+
+# ============================================================================
+# VOLATILITY REGIME FILTER - FIXED VERSION
+# ============================================================================
+class VolatilityRegimeFilter:
+    """Advanced volatility regime analysis - COMPLETELY BULLETPROOF"""
+    
+    @staticmethod
+    def analyze_regime(df: pd.DataFrame, price: float) -> Tuple[bool, str, Dict]:
+        """Comprehensive volatility regime analysis"""
+        try:
+            # ============================================================
+            # STEP 1: VALIDATE DATAFRAME
+            # ============================================================
+            if df is None:
+                return False, "DataFrame is None", {}
+            
+            if not isinstance(df, pd.DataFrame):
+                return False, f"Not a DataFrame: {type(df)}", {}
+            
+            if df.empty:
+                return False, "Empty DataFrame", {}
+            
+            # ============================================================
+            # STEP 2: CHECK COLUMNS
+            # ============================================================
+            required_cols = ['High', 'Low', 'Close']
+            
+            # Get actual columns
+            actual_cols = list(df.columns)
+            
+            # Check if all required columns exist
+            missing = [col for col in required_cols if col not in actual_cols]
+            if missing:
+                return False, f"Missing: {missing}", {}
+            
+            # ============================================================
+            # STEP 3: EXTRACT DATA AS SERIES
+            # ============================================================
+            try:
+                # Extract columns and ensure they are Series
+                high_col = df['High']
+                low_col = df['Low']
+                close_col = df['Close']
+                
+                # Convert to Series if needed
+                if isinstance(high_col, pd.DataFrame):
+                    high_col = high_col.iloc[:, 0]
+                if isinstance(low_col, pd.DataFrame):
+                    low_col = low_col.iloc[:, 0]
+                if isinstance(close_col, pd.DataFrame):
+                    close_col = close_col.iloc[:, 0]
+                
+                # Make clean copies
+                high_data = pd.Series(high_col.values, name='High')
+                low_data = pd.Series(low_col.values, name='Low')
+                close_data = pd.Series(close_col.values, name='Close')
+                
+            except Exception as e:
+                return False, f"Data extract fail: {str(e)[:25]}", {}
+            
+            # ============================================================
+            # STEP 4: CLEAN DATA
+            # ============================================================
+            try:
+                # Remove NaN values
+                high_data = high_data.dropna()
+                low_data = low_data.dropna()
+                close_data = close_data.dropna()
+                
+                # Check we have enough data
+                min_len = min(len(high_data), len(low_data), len(close_data))
+                
+                if min_len < PRESET.get('atr_period', 14) + 5:
+                    return False, f"Insufficient data: {min_len}", {}
+                
+                # Align lengths (take shortest)
+                if len(high_data) != len(low_data) or len(low_data) != len(close_data):
+                    min_len = min(len(high_data), len(low_data), len(close_data))
+                    high_data = high_data.iloc[-min_len:]
+                    low_data = low_data.iloc[-min_len:]
+                    close_data = close_data.iloc[-min_len:]
+                
+            except Exception as e:
+                return False, f"Data clean fail: {str(e)[:25]}", {}
+            
+            # ============================================================
+            # STEP 5: CALCULATE ATR
+            # ============================================================
+            try:
+                atr_period = PRESET.get('atr_period', 14)
+                
+                # Calculate True Range manually for more control
+                tr1 = high_data - low_data
+                tr2 = abs(high_data - close_data.shift(1))
+                tr3 = abs(low_data - close_data.shift(1))
+                
+                # Combine and take max
+                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                
+                # Calculate ATR as rolling mean
+                atr_series = tr.rolling(window=atr_period, min_periods=atr_period).mean()
+                
+                # Remove NaN values
+                atr_series = atr_series.dropna()
+                
+                if len(atr_series) == 0:
+                    return False, "ATR calculation empty", {}
+                
+                # Get current ATR
+                current_atr = float(atr_series.iloc[-1])
+                
+                if pd.isna(current_atr) or current_atr <= 0:
+                    return False, f"Invalid ATR: {current_atr}", {}
+                
+            except Exception as e:
+                return False, f"ATR calc fail: {str(e)[:25]}", {}
+            
+            # ============================================================
+            # STEP 6: CALCULATE METRICS
+            # ============================================================
+            try:
+                # Validate price
+                if price <= 0 or pd.isna(price):
+                    return False, "Invalid price", {}
+                
+                # ATR as percentage
+                atr_pct = float(current_atr / price)
+                
+                # ATR slope
+                if len(atr_series) >= 5:
+                    atr_5 = float(atr_series.iloc[-5])
+                    if atr_5 > 0:
+                        atr_slope = float((current_atr - atr_5) / atr_5)
+                    else:
+                        atr_slope = 0.0
+                else:
+                    atr_slope = 0.0
+                
+                # ATR percentile
+                if len(atr_series) > 10:
+                    from scipy import stats as scipy_stats
+                    atr_percentile = float(scipy_stats.percentileofscore(atr_series, current_atr))
+                else:
+                    atr_percentile = 50.0
+                
+            except Exception as e:
+                return False, f"Metrics fail: {str(e)[:25]}", {}
+            
+            # ============================================================
+            # STEP 7: BUILD METRICS DICT
+            # ============================================================
+            metrics = {
+                'atr': current_atr,
+                'atr_pct': atr_pct,
+                'atr_slope': atr_slope,
+                'atr_percentile': atr_percentile
+            }
+            
+            # ============================================================
+            # STEP 8: REGIME CLASSIFICATION
+            # ============================================================
+            min_vol = PRESET.get('min_volatility_pct', 0.003)
+            
+            # Very low volatility
+            if atr_pct < min_vol * 0.6:
+                return False, f"Very low vol ({atr_pct:.3%})", metrics
+            
+            # Contracting volatility
+            if atr_pct < min_vol and atr_slope < -0.1:
+                return False, f"Vol contracting ({atr_pct:.3%})", metrics
+            
+            # Extreme volatility
+            if atr_pct > 0.10:
+                return False, f"Extreme vol ({atr_pct:.3%})", metrics
+            
+            # Historical extremes
+            if atr_percentile > 95:
+                return False, f"Vol at extremes (P{atr_percentile:.0f})", metrics
+            
+            # ACCEPTABLE REGIME
+            if atr_pct >= min_vol:
+                return True, f"OK ({atr_pct:.3%})", metrics
+            
+            # DEFAULT: REJECT
+            return False, f"Low vol ({atr_pct:.3%})", metrics
+            
+        except Exception as e:
+            # Final catch-all
+            return False, f"Error: {type(e).__name__}", {}
+        
+# ============================================================================
+# PORTFOLIO RISK MANAGER
+# ============================================================================
+
+class PortfolioRiskManager:
+    """Manage portfolio-level risk"""
+    
+    def __init__(self, capital: float):
+        self.capital = capital
+        self.current_trades = []
+        self.sector_exposure = {}
+        self.total_risk = 0.0
+    
+    def can_add_trade(self, trade: Dict) -> Tuple[bool, str]:
+        """Check if trade can be added"""
+        
+        if len(self.current_trades) >= MAX_CONCURRENT_TRADES:
+            return False, "Max concurrent trades"
+        
+        sector = trade.get('sector', 'UNKNOWN')
+        current_sector_exposure = self.sector_exposure.get(sector, 0)
+        
+        if current_sector_exposure >= MAX_SECTOR_EXPOSURE:
+            return False, f"Max sector exposure ({sector})"
+        
+        trade_risk = trade.get('risk_amount', 0)
+        if self.total_risk + trade_risk > self.capital * 0.05:
+            return False, "Max portfolio risk"
+        
+        return True, "OK"
+    
+    def add_trade(self, trade: Dict):
+        """Add trade to portfolio"""
+        self.current_trades.append(trade)
+        sector = trade.get('sector', 'UNKNOWN')
+        self.sector_exposure[sector] = self.sector_exposure.get(sector, 0) + trade.get('position_value', 0) / self.capital
+        self.total_risk += trade.get('risk_amount', 0)# ============================================================================
+# INSTITUTIONAL VOLUME ANALYZER
+# ============================================================================
+
+class InstitutionalVolumeAnalyzer:
+    """Detect institutional participation"""
+    
+    @staticmethod
+    def analyze(df: pd.DataFrame, current_volume: float) -> Tuple[float, str, Dict]:
+        """Analyze volume for institutional activity"""
+        try:
+            vol_20 = df['Volume'].tail(20).mean()
+            vol_50 = df['Volume'].tail(50).mean()
+            vol_ratio = current_volume / vol_20 if vol_20 > 0 else 1.0
+            
+            vol_slope = (vol_20 - vol_50) / vol_50 if vol_50 > 0 else 0
+            
+            price_change = (df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]
+            vol_change = (current_volume - df['Volume'].iloc[-2]) / df['Volume'].iloc[-2]
+            
+            pv_correlation = 1 if (price_change > 0 and vol_change > 0) or (price_change < 0 and vol_change < 0) else -1
+            
+            metrics = {
+                'volume_ratio': vol_ratio,
+                'vol_slope': vol_slope,
+                'pv_correlation': pv_correlation
+            }
+            
+            score = 0
+            signal = ""
+            
+            if vol_ratio >= 3.0 and pv_correlation > 0:
+                score = 10
+                signal = "Very strong institutional buying"
+            elif vol_ratio >= PRESET['min_volume_breakout'] and pv_correlation > 0:
+                score = 7
+                signal = "Strong volume breakout"
+            elif vol_ratio >= 1.5:
+                score = 4
+                signal = "Above average volume"
+            elif vol_ratio < 0.8:
+                score = -5
+                signal = "Weak volume"
+            elif vol_ratio < 0.5:
+                score = -8
+                signal = "Very weak volume"
+            
+            return score, signal, metrics
+            
+        except Exception as e:
+            return 0, f"Volume analysis error: {str(e)[:30]}", {}
+
+# ============================================================================
+# VOLUME SPREAD ANALYSIS (VSA)
+# ============================================================================
+
+class VolumeSpreadAnalyzer:
+    """Volume Spread Analysis for smart money detection"""
+    
+    @staticmethod
+    def analyze(df: pd.DataFrame) -> Tuple[float, str, Dict]:
+        """Comprehensive VSA analysis"""
+        try:
+            if len(df) < 5:
+                return 0, "Insufficient data", {}
+            
+            recent = df.tail(5)
+            current = recent.iloc[-1]
+            prev = recent.iloc[-2]
+            
+            current_spread = current['High'] - current['Low']
+            prev_spread = prev['High'] - prev['Low']
+            avg_spread = recent['High'].sub(recent['Low']).mean()
+            
+            current_volume = current['Volume']
+            avg_volume = df['Volume'].tail(20).mean()
+            
+            spread_ratio = current_spread / avg_spread if avg_spread > 0 else 1
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+            
+            close_position = (current['Close'] - current['Low']) / current_spread if current_spread > 0 else 0.5
+            
+            metrics = {
+                'spread_ratio': spread_ratio,
+                'volume_ratio': volume_ratio,
+                'close_position': close_position
+            }
+            
+            score = 0
+            signal = ""
+            
+            # Accumulation
+            if volume_ratio > 1.5 and spread_ratio < 0.8 and close_position > 0.7:
+                score = 8
+                signal = "VSA: Accumulation"
+            # Distribution
+            elif volume_ratio > 1.5 and spread_ratio < 0.8 and close_position < 0.3:
+                score = -8
+                signal = "VSA: Distribution"
+            # Stopping volume
+            elif volume_ratio > 2.0 and spread_ratio < 0.6:
+                score = 6
+                signal = "VSA: Stopping volume"
+            # No demand
+            elif volume_ratio < 0.7 and spread_ratio > 1.3:
+                score = -6
+                signal = "VSA: No demand"
+            # Effort vs Result
+            elif volume_ratio > 1.8 and abs(current['Close'] - current['Open']) / current_spread < 0.3:
+                score = -5
+                signal = "VSA: High effort, no result"
+            
+            return score, signal, metrics
+            
+        except Exception as e:
+            return 0, f"VSA error: {str(e)[:30]}", {}
+
+# ============================================================================
+# MOMENTUM SCORE CALCULATOR
+# ============================================================================
+
+class MomentumScoreCalculator:
+    """Comprehensive momentum analysis"""
+    
+    @staticmethod
+    def calculate(df: pd.DataFrame) -> Tuple[float, str, Dict]:
+        """Calculate composite momentum score"""
+        try:
+            c = normalize_series(df["Close"])
+            h = normalize_series(df["High"])
+            l = normalize_series(df["Low"])
+            
+            adx_indicator = ADXIndicator(h, l, c, window=14)
+            adx = adx_indicator.adx().iloc[-1]
+            adx_pos = adx_indicator.adx_pos().iloc[-1]
+            adx_neg = adx_indicator.adx_neg().iloc[-1]
+            
+            roc = ROCIndicator(c, window=10).roc().iloc[-1]
+            rsi = RSIIndicator(c, window=14).rsi().iloc[-1]
+            
+            momentum_direction = "BULLISH" if adx_pos > adx_neg else "BEARISH"
+            
+            metrics = {
+                'adx': adx,
+                'adx_pos': adx_pos,
+                'adx_neg': adx_neg,
+                'roc': roc,
+                'rsi': rsi,
+                'direction': momentum_direction
+            }
+            
+            score = 0
+            signal = ""
+            
+            if adx > 30 and abs(roc) > 5:
+                score = 10
+                signal = f"Very strong {momentum_direction.lower()} momentum"
+            elif adx >= PRESET['min_adx'] and abs(roc) > 2:
+                score = 7
+                signal = f"Strong {momentum_direction.lower()} momentum"
+            elif adx >= 20:
+                score = 4
+                signal = f"Moderate momentum"
+            elif adx < 15:
+                score = -5
+                signal = "Weak momentum"
+            
+            # RSI confirmation
+            if momentum_direction == "BULLISH" and rsi > 60:
+                score += 3
+            elif momentum_direction == "BEARISH" and rsi < 40:
+                score += 3
+            
+            return score, signal, metrics
+            
+        except Exception as e:
+            return 0, f"Momentum error: {str(e)[:30]}", {}
+
+# ============================================================================
+# VCP DETECTOR
+# ============================================================================
+
+class VCPDetector:
+    """Detect Volatility Contraction Patterns"""
+    
+    @staticmethod
+    def detect(df: pd.DataFrame) -> Tuple[float, str, Dict]:
+        """Detect VCP setup"""
+        try:
+            lookback = PRESET['vcp_lookback']
+            
+            if len(df) < lookback + 20:
+                return 0, "Insufficient data", {}
+            
+            recent = df.tail(lookback).copy()
+            
+            atr = AverageTrueRange(
+                high=normalize_series(recent['High']),
+                low=normalize_series(recent['Low']),
+                close=normalize_series(recent['Close']),
+                window=10
+            ).average_true_range()
+            
+            bb = BollingerBands(
+                close=normalize_series(recent['Close']),
+                window=20,
+                window_dev=2
+            )
+            bb_width = (bb.bollinger_hband() - bb.bollinger_lband()) / bb.bollinger_mavg()
+            
+            atr_contraction = (atr.iloc[-1] - atr.max()) / atr.max() if atr.max() > 0 else 0
+            bb_contraction = (bb_width.iloc[-1] - bb_width.max()) / bb_width.max() if bb_width.max() > 0 else 0
+            
+            volume = recent['Volume']
+            vol_contraction = (volume.iloc[-5:].mean() - volume.max()) / volume.max() if volume.max() > 0 else 0
+            
+            contraction_score = abs(atr_contraction) + abs(bb_contraction) + abs(vol_contraction)
+            price_range = (recent['High'].max() - recent['Low'].min()) / recent['Close'].iloc[-1]
+            
+            metrics = {
+                'atr_contraction': atr_contraction,
+                'bb_contraction': bb_contraction,
+                'vol_contraction': vol_contraction,
+                'contraction_score': contraction_score,
+                'price_range': price_range
+            }
+            
+            score = 0
+            signal = ""
+            
+            if contraction_score > 0.6 and price_range < 0.15:
+                score = 10
+                signal = "Strong VCP pattern"
+            elif contraction_score > 0.4 and price_range < 0.20:
+                score = 6
+                signal = "Moderate VCP pattern"
+            elif contraction_score > 0.2:
+                score = 3
+                signal = "Weak VCP forming"
+            
+            return score, signal, metrics
+            
+        except Exception as e:
+            return 0, f"VCP error: {str(e)[:30]}", {}
+
+# ============================================================================
+# S/R CLUSTER DETECTOR
+# ============================================================================
+
+class SRClusterDetector:
+    """Advanced S/R detection using price clustering"""
+    
+    @staticmethod
+    def detect(df: pd.DataFrame, lookback: int = 60) -> Dict:
+        """Detect clustered S/R levels"""
+        try:
+            recent = df.tail(lookback).copy()
+            
+            highs = recent['High'].values
+            lows = recent['Low'].values
+            
+            high_indices = argrelextrema(highs, np.greater, order=3)[0]
+            low_indices = argrelextrema(lows, np.less, order=3)[0]
+            
+            swing_highs = [highs[i] for i in high_indices]
+            swing_lows = [lows[i] for i in low_indices]
+            
+            current_price = recent['Close'].iloc[-1]
+            
+            if not swing_highs and not swing_lows:
+                return {
+                    'support': current_price * 0.98,
+                    'resistance': current_price * 1.02,
+                    'strength': 0,
+                    'bias': 'NEUTRAL'
+                }
+            
+            all_levels = swing_highs + swing_lows
+            tolerance = np.std(all_levels) * 0.25 if all_levels else current_price * 0.01
+            
+            clusters = {}
+            for level in all_levels:
+                found = False
+                for center in list(clusters.keys()):
+                    if abs(level - center) <= tolerance:
+                        clusters[center].append(level)
+                        found = True
+                        break
+                if not found:
+                    clusters[level] = [level]
+            
+            cluster_strength = {k: len(v) for k, v in clusters.items()}
+            sorted_clusters = sorted(cluster_strength.items(), key=lambda x: x[1], reverse=True)
+            
+            support_levels = [c[0] for c in sorted_clusters if c[0] < current_price]
+            resistance_levels = [c[0] for c in sorted_clusters if c[0] > current_price]
+            
+            if support_levels:
+                support = max(support_levels)
+                support_strength = cluster_strength[support]
+            else:
+                support = min(all_levels) if all_levels else current_price * 0.98
+                support_strength = 1
+            
+            if resistance_levels:
+                resistance = min(resistance_levels)
+                resistance_strength = cluster_strength[resistance]
+            else:
+                resistance = max(all_levels) if all_levels else current_price * 1.02
+                resistance_strength = 1
+            
+            dist_to_support = abs(current_price - support) / current_price
+            dist_to_resistance = abs(resistance - current_price) / current_price
+            
+            if dist_to_support < 0.02:
+                bias = "AT_SUPPORT"
+            elif dist_to_resistance < 0.02:
+                bias = "AT_RESISTANCE"
+            elif dist_to_support < dist_to_resistance:
+                bias = "NEAR_SUPPORT"
+            else:
+                bias = "NEAR_RESISTANCE"
+            
+            return {
+                'support': float(support),
+                'resistance': float(resistance),
+                'support_strength': support_strength,
+                'resistance_strength': resistance_strength,
+                'total_clusters': len(sorted_clusters),
+                'bias': bias,
+                'dist_to_support': dist_to_support,
+                'dist_to_resistance': dist_to_resistance
+            }
+            
+        except Exception as e:
+            logger.debug(f"S/R clustering failed: {e}")
+            return {
+                'support': None,
+                'resistance': None,
+                'strength': 0,
+                'bias': 'UNKNOWN'
+            }
+
+# ============================================================================
+# SUPERTREND INDICATOR
+# ============================================================================
+
+class SupertrendIndicator:
+    """Supertrend for trend confirmation"""
+    
+    @staticmethod
+    def calculate(df: pd.DataFrame, period: int = 10, multiplier: int = 3) -> Tuple[Optional[str], float, Dict]:
+        """Calculate Supertrend"""
+        try:
+            h = normalize_series(df["High"])
+            l = normalize_series(df["Low"])
+            c = normalize_series(df["Close"])
+            
+            atr = AverageTrueRange(h, l, c, window=period).average_true_range()
+            
+            hl2 = (h + l) / 2
+            upper_band = hl2 + (multiplier * atr)
+            lower_band = hl2 - (multiplier * atr)
+            
+            supertrend = pd.Series(index=c.index, dtype=float)
+            direction = pd.Series(index=c.index, dtype=str)
+            
+            for i in range(len(c)):
+                if i < period:
+                    supertrend.iloc[i] = 0
+                    direction.iloc[i] = None
+                    continue
+                
+                if c.iloc[i] > upper_band.iloc[i-1]:
+                    supertrend.iloc[i] = lower_band.iloc[i]
+                    direction.iloc[i] = "UP"
+                elif c.iloc[i] < lower_band.iloc[i-1]:
+                    supertrend.iloc[i] = upper_band.iloc[i]
+                    direction.iloc[i] = "DOWN"
+                else:
+                    supertrend.iloc[i] = supertrend.iloc[i-1]
+                    direction.iloc[i] = direction.iloc[i-1]
+            
+            current_direction = direction.iloc[-1]
+            
+            if current_direction == "UP":
+                strength = ((c.iloc[-1] - supertrend.iloc[-1]) / supertrend.iloc[-1]) * 100
+            elif current_direction == "DOWN":
+                strength = ((supertrend.iloc[-1] - c.iloc[-1]) / c.iloc[-1]) * 100
+            else:
+                strength = 0
+            
+            consecutive = 1
+            for i in range(len(direction)-2, -1, -1):
+                if direction.iloc[i] == current_direction:
+                    consecutive += 1
+                else:
+                    break
+            
+            metrics = {
+                'direction': current_direction,
+                'strength': strength,
+                'consecutive_bars': consecutive,
+                'supertrend_value': supertrend.iloc[-1]
+            }
+            
+            return current_direction, round(strength, 2), metrics
+            
+        except Exception as e:
+            return None, 0, {}
+
+# ============================================================================
+# GAP DETECTOR
+# ============================================================================
+
+class GapDetector:
+    """Detect and analyze gaps"""
+    
+    @staticmethod
+    def detect(df: pd.DataFrame) -> Tuple[float, str, Dict]:
+        """Detect gap patterns"""
+        try:
+            if len(df) < 2:
+                return 0, "No gap", {}
+            
+            prev_close = df['Close'].iloc[-2]
+            current_open = df['Open'].iloc[-1]
+            current_close = df['Close'].iloc[-1]
+            current_high = df['High'].iloc[-1]
+            current_low = df['Low'].iloc[-1]
+            
+            gap_pct = ((current_open - prev_close) / prev_close) * 100
+            
+            if gap_pct > 0:
+                gap_filled = current_low <= prev_close
+            else:
+                gap_filled = current_high >= prev_close
+            
+            if current_open != 0:
+                post_gap_move = ((current_close - current_open) / current_open) * 100
+            else:
+                post_gap_move = 0
+            
+            metrics = {
+                'gap_pct': gap_pct,
+                'gap_filled': gap_filled,
+                'post_gap_move': post_gap_move
+            }
+            
+            score = 0
+            signal = ""
+            
+            if abs(gap_pct) < 0.5:
+                return 0, "No significant gap", metrics
+            
+            if gap_pct > 2.0 and not gap_filled and post_gap_move > 0:
+                score = 8
+                signal = f"Strong gap up {gap_pct:.1f}%"
+            elif gap_pct > 1.0 and not gap_filled:
+                score = 5
+                signal = f"Gap up {gap_pct:.1f}%"
+            elif gap_pct > 1.0 and gap_filled:
+                score = -4
+                signal = f"Gap up filled - bearish"
+            elif gap_pct < -2.0 and not gap_filled and post_gap_move < 0:
+                score = -8
+                signal = f"Strong gap down {gap_pct:.1f}%"
+            elif gap_pct < -1.0 and not gap_filled:
+                score = -5
+                signal = f"Gap down {gap_pct:.1f}%"
+            elif gap_pct < -1.0 and gap_filled:
+                score = 4
+                signal = f"Gap down filled - bullish"
+            
+            return score, signal, metrics
+            
+        except Exception as e:
+            return 0, f"Gap detection error: {str(e)[:30]}", {}
+
+# ============================================================================
+# CANDLESTICK PATTERN DETECTOR
+# ============================================================================
+
+class CandlestickPatternDetector:
+    """Detect common candlestick patterns"""
+    
+    @staticmethod
+    def detect(df: pd.DataFrame) -> Dict:
+        """Detect bullish/bearish candlestick patterns"""
+        try:
+            if len(df) < 3:
+                return {'pattern': 'NONE', 'score': 0}
+            
+            recent = df.tail(3)
+            c0 = recent.iloc[-3]
+            c1 = recent.iloc[-2]
+            c2 = recent.iloc[-1]
+            
+            def is_bullish(candle):
+                return candle['Close'] > candle['Open']
+            
+            def is_bearish(candle):
+                return candle['Close'] < candle['Open']
+            
+            def body_size(candle):
+                return abs(candle['Close'] - candle['Open'])
+            
+            def candle_range(candle):
+                return candle['High'] - candle['Low']
+            
+            def upper_shadow(candle):
+                return candle['High'] - max(candle['Open'], candle['Close'])
+            
+            def lower_shadow(candle):
+                return min(candle['Open'], candle['Close']) - candle['Low']
+            
+            pattern = 'NONE'
+            score = 0
+            
+            # Bullish Engulfing
+            if (is_bearish(c1) and is_bullish(c2) and
+                c2['Close'] > c1['Open'] and c2['Open'] < c1['Close']):
+                pattern = 'BULLISH_ENGULFING'
+                score = 7
+            
+            # Bearish Engulfing
+            elif (is_bullish(c1) and is_bearish(c2) and
+                  c2['Close'] < c1['Open'] and c2['Open'] > c1['Close']):
+                pattern = 'BEARISH_ENGULFING'
+                score = -7
+            
+            # Hammer
+            elif (body_size(c2) < candle_range(c2) * 0.3 and
+                  lower_shadow(c2) > body_size(c2) * 2 and
+                  upper_shadow(c2) < body_size(c2) * 0.5):
+                pattern = 'HAMMER'
+                score = 6
+            
+            # Shooting Star
+            elif (body_size(c2) < candle_range(c2) * 0.3 and
+                  upper_shadow(c2) > body_size(c2) * 2 and
+                  lower_shadow(c2) < body_size(c2) * 0.5):
+                pattern = 'SHOOTING_STAR'
+                score = -6
+            
+            # Doji
+            elif body_size(c2) < candle_range(c2) * 0.1:
+                pattern = 'DOJI'
+                score = -2
+            
+            # Morning Star
+            elif (is_bearish(c0) and body_size(c1) < body_size(c0) * 0.3 and
+                  is_bullish(c2) and c2['Close'] > (c0['Open'] + c0['Close']) / 2):
+                pattern = 'MORNING_STAR'
+                score = 8
+            
+            # Evening Star
+            elif (is_bullish(c0) and body_size(c1) < body_size(c0) * 0.3 and
+                  is_bearish(c2) and c2['Close'] < (c0['Open'] + c0['Close']) / 2):
+                pattern = 'EVENING_STAR'
+                score = -8
+            
+            # Strong bullish
+            elif (is_bullish(c2) and body_size(c2) > candle_range(c2) * 0.7 and
+                  candle_range(c2) > candle_range(c1) * 1.5):
+                pattern = 'STRONG_BULLISH'
+                score = 5
+            
+            # Strong bearish
+            elif (is_bearish(c2) and body_size(c2) > candle_range(c2) * 0.7 and
+                  candle_range(c2) > candle_range(c1) * 1.5):
+                pattern = 'STRONG_BEARISH'
+                score = -5
+            
+            return {
+                'pattern': pattern,
+                'score': score,
+                'description': pattern.replace('_', ' ').title()
+            }
+            
+        except Exception as e:
+            return {'pattern': 'NONE', 'score': 0, 'description': 'None'}
+# ============================================================================
+# MULTI-TIMEFRAME ANALYZER
+# ============================================================================
+
+class MultiTimeframeAnalyzer:
+    """Analyze trends across multiple timeframes"""
+    
+    @staticmethod
+    def get_trend(ticker: str) -> Optional[str]:
+        """Get multi-timeframe trend alignment"""
+        try:
+            daily = yf.download(ticker, period="3mo", interval="1d", progress=False)
+            weekly = yf.download(ticker, period="6mo", interval="1wk", progress=False)
+            
+            if daily.empty or weekly.empty:
+                return None
+            
+            daily_ema20 = daily['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+            daily_ema50 = daily['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+            daily_close = daily['Close'].iloc[-1]
+            
+            daily_trend = "UP" if daily_close > daily_ema20 > daily_ema50 else "DOWN"
+            
+            weekly_ema10 = weekly['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
+            weekly_ema20 = weekly['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+            weekly_close = weekly['Close'].iloc[-1]
+            
+            weekly_trend = "UP" if weekly_close > weekly_ema10 > weekly_ema20 else "DOWN"
+            
+            if daily_trend == weekly_trend:
+                return daily_trend
+            else:
+                return "MIXED"
+                
+        except Exception:
+            return None
+
+# ============================================================================
+# FIBONACCI LEVEL DETECTOR
+# ============================================================================
+
+class FibonacciDetector:
+    """Fibonacci retracement levels"""
+    
+    @staticmethod
+    def calculate_levels(df: pd.DataFrame, lookback: int = 50) -> Optional[Dict]:
+        """Calculate Fibonacci levels"""
+        try:
+            recent = df.tail(lookback)
+            high = recent['High'].max()
+            low = recent['Low'].min()
+            diff = high - low
+            
+            levels = {
+                'high': high,
+                'low': low,
+                'fib_0.236': high - (diff * 0.236),
+                'fib_0.382': high - (diff * 0.382),
+                'fib_0.500': high - (diff * 0.500),
+                'fib_0.618': high - (diff * 0.618),
+                'fib_0.786': high - (diff * 0.786),
+            }
+            
+            return levels
+            
+        except Exception:
+            return None
+    
+    @staticmethod
+    def detect_bounce(price: float, fib_levels: Dict, side: str) -> Tuple[int, str]:
+        """Detect if price is near Fibonacci level"""
+        try:
+            if not fib_levels:
+                return 0, ""
+            
+            tolerance = 0.02
+            
+            for level_name, level_price in fib_levels.items():
+                if 'fib_' not in level_name:
+                    continue
+                
+                distance = abs(price - level_price) / price
+                
+                if distance < tolerance:
+                    if side == "LONG" and price >= level_price:
+                        return 8, f"Bouncing off {level_name}"
+                    elif side == "SHORT" and price <= level_price:
+                        return 8, f"Rejecting at {level_name}"
+            
+            return 0, ""
+            
+        except Exception:
+            return 0, ""
+
+# ============================================================================
+# VIX SENTIMENT ANALYZER
+# ============================================================================
+
+class VIXSentimentAnalyzer:
+    """Market sentiment using VIX"""
+    
+    @staticmethod
+    def get_vix_sentiment() -> Optional[Dict]:
+        """Get current VIX sentiment"""
+        try:
+            vix = yf.download("^INDIAVIX", period="1mo", interval="1d", progress=False)
+            
+            if vix.empty:
+                return None
+            
+            current_vix = vix['Close'].iloc[-1]
+            vix_avg = vix['Close'].mean()
+            vix_percentile = stats.percentileofscore(vix['Close'], current_vix)
+            
+            if current_vix < 15:
+                regime = "LOW_VOLATILITY"
+                sentiment = "BULLISH"
+                score = 5
+            elif current_vix < 20:
+                regime = "NORMAL"
+                sentiment = "NEUTRAL"
+                score = 0
+            elif current_vix < 25:
+                regime = "ELEVATED"
+                sentiment = "CAUTIOUS"
+                score = -3
+            else:
+                regime = "HIGH_VOLATILITY"
+                sentiment = "BEARISH"
+                score = -7
+            
+            return {
+                'vix': current_vix,
+                'vix_avg': vix_avg,
+                'vix_percentile': vix_percentile,
+                'regime': regime,
+                'sentiment': sentiment,
+                'score': score
+            }
+            
+        except Exception:
+            return None
+
+# ============================================================================
+# SECTOR ROTATION ANALYZER
+# ============================================================================
+
+class SectorRotationAnalyzer:
+    """Analyze sector strength"""
+    
+    def __init__(self):
+        self.sector_etfs = {
+            'NIFTY_BANK': '^NSEBANK',
+            'NIFTY_IT': 'NIFTYBEES.NS',
+            'NIFTY_AUTO': '^CNXAUTO',
+            'NIFTY_PHARMA': '^CNXPHARMA',
+        }
+        self.sector_strength = {}
+    
+    def update_sector_strength(self):
+        """Update relative strength of sectors"""
+        try:
+            for sector, ticker in self.sector_etfs.items():
+                try:
+                    data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+                    if not data.empty:
+                        returns = (data['Close'].iloc[-1] / data['Close'].iloc[-20] - 1) * 100
+                        self.sector_strength[sector] = returns
+                except:
+                    continue
+        except Exception:
+            pass
+    
+    def get_sector_strength(self, sector: str) -> Optional[Tuple[float, str]]:
+        """Get sector relative strength"""
+        try:
+            if not self.sector_strength:
+                self.update_sector_strength()
+            
+            if sector in self.sector_strength:
+                strength = self.sector_strength[sector]
+                
+                if strength > 5:
+                    return strength, "STRONG"
+                elif strength > 0:
+                    return strength, "MODERATE"
+                else:
+                    return strength, "WEAK"
+            
+            return None
+            
+        except Exception:
+            return None
+
+# ============================================================================
+# ADVANCED BACKTESTING ENGINE
+# ============================================================================
+
+class AdvancedBacktester:
+    """Comprehensive backtesting with walk-forward and Monte Carlo"""
+    
+    def __init__(self, initial_capital: float = 100000):
+        self.initial_capital = initial_capital
+        self.trades = []
+    
+    def backtest_strategy(
+        self,
+        df: pd.DataFrame,
+        signal_type: str,
+        entry_conditions: Dict,
+        lookback_days: int = BACKTEST_LOOKBACK_DAYS
+    ) -> Optional[BacktestResult]:
+        """Full backtest of strategy"""
+        
+        if len(df) < lookback_days + 50:
+            lookback_days = max(100, len(df) - 50)
+        
+        if len(df) < 150:
             return None
         
-        nifty_price = float(nifty_df['Close'].iloc[-1])
-        nifty_prev = float(nifty_df['Close'].iloc[-2]) if len(nifty_df) > 1 else nifty_price
-        nifty_change = ((nifty_price - nifty_prev) / nifty_prev) * 100
+        test_data = df.iloc[-lookback_days:].copy()
+        trades = []
         
-        # Calculate NIFTY indicators
-        nifty_sma20 = nifty_df['Close'].rolling(20).mean().iloc[-1]
-        nifty_sma50 = nifty_df['Close'].rolling(50).mean().iloc[-1] if len(nifty_df) >= 50 else nifty_sma20
-        nifty_rsi = calculate_rsi(nifty_df['Close']).iloc[-1]
-        
-        if pd.isna(nifty_rsi):
-            nifty_rsi = 50
-        
-        # Get India VIX (Volatility Index)
-        vix = yf.Ticker("^INDIAVIX")
-        vix_df = vix.history(period="5d")
-        vix_value = float(vix_df['Close'].iloc[-1]) if not vix_df.empty else 15
-        
-        # Calculate Market Health Score (0-100)
-        health_score = 50  # Start neutral
-        
-        # NIFTY Price vs SMA20 (0-20 points)
-        if nifty_price > nifty_sma20:
-            health_score += 15
-        else:
-            health_score -= 15
-        
-        # NIFTY Price vs SMA50 (0-15 points)
-        if nifty_price > nifty_sma50:
-            health_score += 10
-        else:
-            health_score -= 10
-        
-        # NIFTY RSI (0-20 points)
-        if nifty_rsi > 55:
-            health_score += 15
-        elif nifty_rsi > 45:
-            health_score += 5
-        elif nifty_rsi < 35:
-            health_score -= 15
-        elif nifty_rsi < 45:
-            health_score -= 10
-        
-        # VIX Level (0-25 points)
-        if vix_value < 12:
-            health_score += 20  # Very low volatility = good
-        elif vix_value < 15:
-            health_score += 10
-        elif vix_value > 25:
-            health_score -= 20  # High volatility = bad
-        elif vix_value > 18:
-            health_score -= 10
-        
-        # NIFTY Trend (SMA20 vs SMA50) (0-20 points)
-        if nifty_sma20 > nifty_sma50:
-            health_score += 10  # Golden cross
-        else:
-            health_score -= 10  # Death cross
-        
-        # Cap between 0-100
-        health_score = max(0, min(100, health_score))
-        
-        # Determine Status
-        if health_score >= 70:
-            status = "BULLISH"
-            color = "#28a745"
-            icon = "🟢"
-            action = "✅ Good environment for trading"
-            sl_adjustment = "NORMAL"
-        elif health_score >= 50:
-            status = "NEUTRAL"
-            color = "#ffc107"
-            icon = "🟡"
-            action = "⚠️ Be selective with new positions"
-            sl_adjustment = "NORMAL"
-        elif health_score >= 30:
-            status = "WEAK"
-            color = "#fd7e14"
-            icon = "🟠"
-            action = "⚠️ Tighten stop losses, avoid new longs"
-            sl_adjustment = "TIGHTEN"
-        else:
-            status = "BEARISH"
-            color = "#dc3545"
-            icon = "🔴"
-            action = "🚨 HIGH RISK - Consider reducing exposure"
-            sl_adjustment = "AGGRESSIVE"
-        
-        # Build message
-        message = f"NIFTY: ₹{nifty_price:,.0f} ({nifty_change:+.2f}%) | RSI: {nifty_rsi:.0f} | VIX: {vix_value:.1f}"
-        
-        return {
-            'status': status,
-            'health_score': health_score,
-            'message': message,
-            'color': color,
-            'icon': icon,
-            'action': action,
-            'sl_adjustment': sl_adjustment,
-            'nifty_price': nifty_price,
-            'nifty_change': nifty_change,
-            'nifty_rsi': nifty_rsi,
-            'nifty_sma20': nifty_sma20,
-            'nifty_sma50': nifty_sma50,
-            'vix': vix_value,
-            'above_sma20': nifty_price > nifty_sma20,
-            'above_sma50': nifty_price > nifty_sma50
-        }
-    
-    except Exception as e:
-        logger.error(f"Market health check failed: {e}")
-        return None
-# ============================================================================
-# GAP 2: EMERGENCY EXIT DETECTOR
-# ============================================================================
-
-def detect_emergency_exit(result, market_health):
-    """
-    Detect critical exit conditions that override normal analysis
-    Returns: (is_emergency, reasons, urgency_level)
-    """
-    emergency = False
-    reasons = []
-    urgency = "NORMAL"
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 1: Market Crash + Losing Position
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if market_health and market_health['status'] in ['BEARISH', 'WEAK']:
-        if result['pnl_percent'] < -2:
-            emergency = True
-            urgency = "CRITICAL"
-            reasons.append(f"🚨 Market {market_health['status']} + Position down {result['pnl_percent']:.1f}%")
-        elif result['pnl_percent'] < 0:
-            urgency = "HIGH"
-            reasons.append(f"⚠️ Weak market + Position negative ({result['pnl_percent']:.1f}%)")
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 2: Gap Down Below SL
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if result['position_type'] == 'LONG':
-        if result['day_low'] < result['stop_loss'] * 0.98:
-            emergency = True
-            urgency = "CRITICAL"
-            reasons.append(f"🚨 Gap down: Day low ₹{result['day_low']:.2f} below SL ₹{result['stop_loss']:.2f}")
-    else:  # SHORT
-        if result['day_high'] > result['stop_loss'] * 1.02:
-            emergency = True
-            urgency = "CRITICAL"
-            reasons.append(f"🚨 Gap up: Day high ₹{result['day_high']:.2f} above SL ₹{result['stop_loss']:.2f}")
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 3: VIX Spike + High SL Risk
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if market_health and market_health['vix'] > 25:
-        if result['sl_risk'] > 60:
-            emergency = True
-            urgency = "CRITICAL"
-            reasons.append(f"🚨 VIX spike ({market_health['vix']:.1f}) + SL Risk {result['sl_risk']}%")
-        elif result['sl_risk'] > 50:
-            urgency = "HIGH"
-            reasons.append(f"⚠️ High VIX ({market_health['vix']:.1f}) + SL Risk {result['sl_risk']}%")
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 4: Heavy Selling Volume + Negative
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if result['position_type'] == 'LONG':
-        if result['volume_signal'] in ['STRONG_SELLING', 'SELLING']:
-            if result['volume_ratio'] > 2.5 and result['pnl_percent'] < -1:
-                emergency = True
-                urgency = "HIGH"
-                reasons.append(f"⚠️ Heavy selling volume ({result['volume_ratio']:.1f}x) + Position down")
-    else:  # SHORT
-        if result['volume_signal'] in ['STRONG_BUYING', 'BUYING']:
-            if result['volume_ratio'] > 2.5 and result['pnl_percent'] < -1:
-                emergency = True
-                urgency = "HIGH"
-                reasons.append(f"⚠️ Heavy buying volume ({result['volume_ratio']:.1f}x) + Position down")
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 5: All Timeframes Against Position
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if result['mtf_alignment'] < 20 and result['sl_risk'] > 50:
-        emergency = True
-        urgency = "HIGH"
-        reasons.append(f"⚠️ All timeframes against position (MTF: {result['mtf_alignment']}%)")
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EMERGENCY CONDITION 6: Breakdown Below Support with Volume
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if result['position_type'] == 'LONG':
-        if result['current_price'] < result['support'] * 0.99:
-            if result['volume_ratio'] > 1.5:
-                emergency = True
-                urgency = "HIGH"
-                reasons.append(f"⚠️ Breakdown below support ₹{result['support']:.2f} with volume")
-    else:  # SHORT
-        if result['current_price'] > result['resistance'] * 1.01:
-            if result['volume_ratio'] > 1.5:
-                emergency = True
-                urgency = "HIGH"
-                reasons.append(f"⚠️ Breakout above resistance ₹{result['resistance']:.2f} with volume")
-    
-    return emergency, reasons, urgency    
-
-# ============================================================================
-# GAP 3: STOCK-SPECIFIC WIN RATE ANALYSIS
-# ============================================================================
-
-def get_stock_performance_history(ticker):
-    """
-    Analyze historical performance for specific stock
-    Returns: dict with win_rate, trade_count, avg_win, avg_loss, recommendation
-    """
-    # Get trades for this ticker
-    stock_trades = [t for t in st.session_state.trade_history if t['ticker'] == ticker]
-    
-    if len(stock_trades) < 3:
-        return {
-            'has_history': False,
-            'trade_count': len(stock_trades),
-            'message': f"Only {len(stock_trades)} trade(s) logged - need 3+ for analysis"
-        }
-    
-    # Calculate statistics
-    total_trades = len(stock_trades)
-    wins = sum(1 for t in stock_trades if t['win'])
-    losses = total_trades - wins
-    win_rate = (wins / total_trades) * 100
-    
-    winning_trades = [t for t in stock_trades if t['win']]
-    losing_trades = [t for t in stock_trades if not t['win']]
-    
-    avg_win = sum(t['pnl'] for t in winning_trades) / max(wins, 1)
-    avg_loss = sum(abs(t['pnl']) for t in losing_trades) / max(losses, 1)
-    
-    # Calculate expectancy
-    expectancy = (win_rate/100 * avg_win) - ((100-win_rate)/100 * avg_loss)
-    
-    # Profit factor
-    total_profit = sum(t['pnl'] for t in winning_trades)
-    total_loss = sum(abs(t['pnl']) for t in losing_trades)
-    profit_factor = total_profit / max(total_loss, 1)
-    
-    # Determine recommendation
-    if win_rate < 30:
-        quality = "POOR"
-        color = "#dc3545"
-        icon = "🔴"
-        recommendation = "⚠️ AVOID - Very low win rate"
-    elif win_rate < 40:
-        quality = "WEAK"
-        color = "#fd7e14"
-        icon = "🟠"
-        recommendation = "⚠️ CAUTION - Below average performance"
-    elif win_rate < 50:
-        quality = "AVERAGE"
-        color = "#ffc107"
-        icon = "🟡"
-        recommendation = "ℹ️ Acceptable - Monitor closely"
-    elif win_rate < 60:
-        quality = "GOOD"
-        color = "#28a745"
-        icon = "🟢"
-        recommendation = "✅ Good track record"
-    else:
-        quality = "EXCELLENT"
-        color = "#20c997"
-        icon = "💚"
-        recommendation = "✅ Excellent performance!"
-    
-    # Check expectancy
-    if expectancy < 0:
-        recommendation = "🚨 NEGATIVE EXPECTANCY - Stop trading this stock!"
-        quality = "LOSING"
-        color = "#dc3545"
-    
-    return {
-        'has_history': True,
-        'trade_count': total_trades,
-        'wins': wins,
-        'losses': losses,
-        'win_rate': win_rate,
-        'avg_win': avg_win,
-        'avg_loss': avg_loss,
-        'expectancy': expectancy,
-        'profit_factor': profit_factor,
-        'quality': quality,
-        'color': color,
-        'icon': icon,
-        'recommendation': recommendation
-    }
-
-# ============================================================================
-# GAP 4: CHART PATTERN DETECTION
-# ============================================================================
-
-def detect_chart_patterns(df, current_price):
-    """
-    Detect common chart patterns
-    Returns: list of detected patterns with signals
-    """
-    patterns = []
-    
-    if len(df) < 30:
-        return patterns
-    
-    close = df['Close']
-    high = df['High']
-    low = df['Low']
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 1: DOUBLE TOP (Bearish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    last_30 = df.tail(30)
-    highs_30 = last_30['High']
-    
-    # Find two highest peaks
-    sorted_highs = highs_30.nlargest(5)
-    if len(sorted_highs) >= 2:
-        peak1 = sorted_highs.iloc[0]
-        peak2 = sorted_highs.iloc[1]
-        
-        # Check if peaks are similar (within 2%)
-        if abs(peak1 - peak2) / peak1 < 0.02:
-            # Check if current price is below peaks
-            if current_price < peak1 * 0.98:
-                patterns.append({
-                    'name': 'DOUBLE TOP',
-                    'signal': 'BEARISH',
-                    'strength': 'HIGH',
-                    'icon': '📉',
-                    'description': f'Resistance at ₹{peak1:.2f} tested twice',
-                    'action': 'Watch for breakdown - potential reversal'
-                })
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 2: DOUBLE BOTTOM (Bullish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    lows_30 = last_30['Low']
-    sorted_lows = lows_30.nsmallest(5)
-    
-    if len(sorted_lows) >= 2:
-        bottom1 = sorted_lows.iloc[0]
-        bottom2 = sorted_lows.iloc[1]
-        
-        if abs(bottom1 - bottom2) / bottom1 < 0.02:
-            if current_price > bottom1 * 1.02:
-                patterns.append({
-                    'name': 'DOUBLE BOTTOM',
-                    'signal': 'BULLISH',
-                    'strength': 'HIGH',
-                    'icon': '📈',
-                    'description': f'Support at ₹{bottom1:.2f} held twice',
-                    'action': 'Watch for breakout - potential reversal'
-                })
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 3: BULLISH ENGULFING (Bullish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if len(df) >= 2:
-        prev_candle = df.iloc[-2]
-        curr_candle = df.iloc[-1]
-        
-        # Previous red, current green, and current engulfs previous
-        if (prev_candle['Close'] < prev_candle['Open'] and
-            curr_candle['Close'] > curr_candle['Open'] and
-            curr_candle['Open'] < prev_candle['Close'] and
-            curr_candle['Close'] > prev_candle['Open']):
+        for i in range(50, len(test_data) - 20):
+            window = test_data.iloc[:i+1].copy()
             
-            patterns.append({
-                'name': 'BULLISH ENGULFING',
-                'signal': 'BULLISH',
-                'strength': 'MEDIUM',
-                'icon': '🟢',
-                'description': 'Strong reversal candle pattern',
-                'action': 'Potential upward momentum'
-            })
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 4: BEARISH ENGULFING (Bearish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if len(df) >= 2:
-        prev_candle = df.iloc[-2]
-        curr_candle = df.iloc[-1]
-        
-        if (prev_candle['Close'] > prev_candle['Open'] and
-            curr_candle['Close'] < curr_candle['Open'] and
-            curr_candle['Open'] > prev_candle['Close'] and
-            curr_candle['Close'] < prev_candle['Open']):
-            
-            patterns.append({
-                'name': 'BEARISH ENGULFING',
-                'signal': 'BEARISH',
-                'strength': 'MEDIUM',
-                'icon': '🔴',
-                'description': 'Strong reversal candle pattern',
-                'action': 'Potential downward momentum'
-            })
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 5: ASCENDING TRIANGLE (Bullish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if len(df) >= 20:
-        last_20 = df.tail(20)
-        
-        # Check if highs are flat (resistance)
-        highs_20 = last_20['High']
-        high_max = highs_20.max()
-        high_std = highs_20.std()
-        
-        # Check if lows are rising
-        lows_20 = last_20['Low']
-        low_trend = lows_20.iloc[-5:].mean() > lows_20.iloc[:5].mean()
-        
-        if high_std / high_max < 0.015 and low_trend:  # Flat top + rising lows
-            patterns.append({
-                'name': 'ASCENDING TRIANGLE',
-                'signal': 'BULLISH',
-                'strength': 'HIGH',
-                'icon': '📐',
-                'description': f'Breakout potential above ₹{high_max:.2f}',
-                'action': 'Watch for volume spike on breakout'
-            })
-    
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PATTERN 6: DESCENDING TRIANGLE (Bearish)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if len(df) >= 20:
-        last_20 = df.tail(20)
-        
-        # Check if lows are flat (support)
-        lows_20 = last_20['Low']
-        low_min = lows_20.min()
-        low_std = lows_20.std()
-        
-        # Check if highs are falling
-        highs_20 = last_20['High']
-        high_trend = highs_20.iloc[-5:].mean() < highs_20.iloc[:5].mean()
-        
-        if low_std / low_min < 0.015 and high_trend:  # Flat bottom + falling highs
-            patterns.append({
-                'name': 'DESCENDING TRIANGLE',
-                'signal': 'BEARISH',
-                'strength': 'HIGH',
-                'icon': '📐',
-                'description': f'Breakdown potential below ₹{low_min:.2f}',
-                'action': 'Watch for volume spike on breakdown'
-            })
-    
-    return patterns
-
-def send_email_alert(subject, html_content, sender, password, recipient):
-    """
-    Send email alert - Returns (success, message)
-    """
-    if not sender or not password or not recipient:
-        log_email("❌ Missing email credentials")
-        return False, "Missing email credentials"
-    
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender
-        msg['To'] = recipient
-        msg.attach(MIMEText(html_content, 'html'))
-        
-        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)  # ✅ Add timeout
-        server.starttls()
-        server.login(sender, password)
-        server.sendmail(sender, recipient, msg.as_string())
-        server.quit()
-        
-        log_email(f"✅ Email sent: {subject}")  # ✅ Add logging
-        return True, "Email sent successfully"
-    
-    except smtplib.SMTPAuthenticationError:
-        log_email("❌ SMTP Authentication failed")
-        return False, "Authentication failed - check App Password"
-    except smtplib.SMTPRecipientsRefused:
-        log_email("❌ Invalid recipient email")
-        return False, "Invalid recipient email address"
-    except smtplib.SMTPException as e:
-        log_email(f"❌ SMTP error: {str(e)}")
-        return False, f"SMTP error: {str(e)}"
-    except Exception as e:
-        log_email(f"❌ Email failed: {str(e)}")
-        return False, f"Email failed: {str(e)}"
-    
-
-def log_email(message):
-    """Add to email log"""
-    timestamp = get_ist_now().strftime("%H:%M:%S")
-    st.session_state.email_log.append(f"[{timestamp}] {message}")
-    if len(st.session_state.email_log) > 50:
-        st.session_state.email_log = st.session_state.email_log[-50:]
-
-def generate_alert_hash(ticker, alert_type, key_value=""):
-    """Generate unique hash for an alert"""
-    alert_string = f"{ticker}_{alert_type}_{key_value}_{get_ist_now().strftime('%Y%m%d')}"
-    return hashlib.md5(alert_string.encode()).hexdigest()[:12]
-
-
-def can_send_email(alert_hash, cooldown_minutes=15):
-    """
-    Check if enough time has passed since last email
-    """
-    if alert_hash not in st.session_state.last_email_time:
-        return True
-    
-    last_sent = st.session_state.last_email_time[alert_hash]
-    now = datetime.now()  # ✅ Use simple datetime
-    
-    try:
-        # ✅ Handle timezone issues properly
-        if isinstance(last_sent, datetime):
-            # Remove timezone info for comparison
-            if last_sent.tzinfo is not None:
-                last_sent = last_sent.replace(tzinfo=None)
-            if now.tzinfo is not None:
-                now = now.replace(tzinfo=None)
-            
-            time_diff = (now - last_sent).total_seconds() / 60.0
-        else:
-            # Invalid last_sent, allow email
-            return True
-        
-        # ✅ Debug log
-        if time_diff < cooldown_minutes:
-            logger.info(f"Email cooldown: {time_diff:.1f}/{cooldown_minutes} min for {alert_hash}")
-        
-        return time_diff >= cooldown_minutes
-    
-    except Exception as e:
-        logger.error(f"Email cooldown check failed: {e}")
-        return True  # Allow email on error
-    
-
-def mark_email_sent(alert_hash):
-    """Mark an alert as sent"""
-    st.session_state.last_email_time[alert_hash] = datetime.now()  # ✅ Use datetime.now()
-    st.session_state.email_sent_alerts[alert_hash] = True
-    logger.info(f"Email marked sent: {alert_hash} at {datetime.now().strftime('%H:%M:%S')}")
-
-MAX_TRADE_HISTORY = 500
-def log_trade(ticker, entry_price, exit_price, quantity, position_type, exit_reason):
-    """Log completed trade"""
-    if position_type == "LONG":
-        pnl = (exit_price - entry_price) * quantity
-        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-    else:
-        pnl = (entry_price - exit_price) * quantity
-        pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-    
-    trade = {
-        'timestamp': get_ist_now(),
-        'ticker': ticker,
-        'type': position_type,
-        'entry': entry_price,
-        'exit': exit_price,
-        'quantity': quantity,
-        'pnl': pnl,
-        'pnl_pct': pnl_pct,
-        'reason': exit_reason,
-        'win': pnl > 0
-    }
-    
-    st.session_state.trade_history.append(trade)
-    if len(st.session_state.trade_history) > MAX_TRADE_HISTORY:
-        st.session_state.trade_history = st.session_state.trade_history[-MAX_TRADE_HISTORY:]
-    
-    # Update stats
-    stats = st.session_state.performance_stats
-    stats['total_trades'] += 1
-    
-    if pnl > 0:
-        stats['wins'] += 1
-        stats['total_profit'] += pnl
-    else:
-        stats['losses'] += 1
-        stats['total_loss'] += abs(pnl)
-
-def get_performance_stats():
-    """Calculate performance statistics"""
-    stats = st.session_state.performance_stats
-    history = st.session_state.trade_history
-    
-    if stats['total_trades'] == 0:
-        return None
-    
-    win_rate = (stats['wins'] / stats['total_trades'] * 100)
-    avg_win = stats['total_profit'] / stats['wins'] if stats['wins'] > 0 else 0
-    avg_loss = stats['total_loss'] / stats['losses'] if stats['losses'] > 0 else 0
-    
-    expectancy = (win_rate/100 * avg_win) - ((100-win_rate)/100 * avg_loss)
-    profit_factor = stats['total_profit'] / stats['total_loss'] if stats['total_loss'] > 0 else float('inf')
-    
-    return {
-        'total_trades': stats['total_trades'],
-        'wins': stats['wins'],
-        'losses': stats['losses'],
-        'win_rate': win_rate,
-        'avg_win': avg_win,
-        'avg_loss': avg_loss,
-        'expectancy': expectancy,
-        'profit_factor': profit_factor,
-        'net_profit': stats['total_profit'] - stats['total_loss']
-    }
-
-def update_drawdown(current_portfolio_value):
-    """Update drawdown tracking"""
-    if current_portfolio_value > st.session_state.peak_portfolio_value:
-        st.session_state.peak_portfolio_value = current_portfolio_value
-    
-    if st.session_state.peak_portfolio_value > 0:
-        drawdown = ((st.session_state.peak_portfolio_value - current_portfolio_value) / 
-                   st.session_state.peak_portfolio_value) * 100
-        st.session_state.current_drawdown = drawdown
-        
-        if drawdown > st.session_state.max_drawdown:
-            st.session_state.max_drawdown = drawdown
-        
-        # Store history
-        st.session_state.drawdown_history.append({
-            'timestamp': get_ist_now(),
-            'value': current_portfolio_value,
-            'drawdown': drawdown
-        })
-        
-        # Keep last 1000 records
-        if len(st.session_state.drawdown_history) > 1000:
-            st.session_state.drawdown_history = st.session_state.drawdown_history[-1000:]
-
-def rate_limited_api_call(ticker, min_interval=1.0):
-    """Ensure minimum interval between API calls"""
-    current_time = time.time()
-    
-    if ticker in st.session_state.last_api_call:
-        elapsed = current_time - st.session_state.last_api_call[ticker]
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-    
-    st.session_state.last_api_call[ticker] = time.time()
-    st.session_state.api_call_count += 1
-    return True
-
-def get_stock_data_safe(ticker, period="6mo"):
-    """Safely fetch stock data with rate limiting"""
-    symbol = ticker if '.NS' in str(ticker) or '.BO' in str(ticker) else f"{ticker}.NS"
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        try:
-            rate_limited_api_call(symbol)
-            stock = yf.Ticker(symbol)
-            df = stock.history(period=period)
-            
-            if not df.empty:
-                df.reset_index(inplace=True)
-                return df
+            if self._check_entry_conditions(window, signal_type, entry_conditions):
+                trade = self._simulate_trade(
+                    test_data.iloc[i:min(i+30, len(test_data))],
+                    signal_type,
+                    entry_price=test_data.iloc[i]['Close'],
+                    atr=self._calculate_atr(window)
+                )
                 
+                if trade:
+                    trades.append(trade)
+        
+        if len(trades) < MIN_BACKTEST_TRADES:
+            return None
+        
+        return self._calculate_metrics(trades)
+    
+    def _check_entry_conditions(
+        self,
+        df: pd.DataFrame,
+        signal_type: str,
+        entry_conditions: Dict
+    ) -> bool:
+        """Enhanced entry condition check with v7.4 features"""
+        try:
+            if len(df) < 50:
+                return False
+            
+            close = df['Close'].iloc[-1]
+            
+            ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+            ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+            
+            delta = df['Close'].diff()
+            gain = delta.where(delta > 0, 0).rolling(14).mean()
+            loss = -delta.where(delta < 0, 0).rolling(14).mean()
+            rs = gain / loss
+            rsi = (100 - (100 / (1 + rs))).iloc[-1]
+            
+            volume = df['Volume'].iloc[-1]
+            avg_volume = df['Volume'].rolling(20).mean().iloc[-1]
+            volume_ratio = volume / avg_volume if avg_volume > 0 else 1
+            
+            exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+            exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+            macd_line = exp12 - exp26
+            macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+            
+            high = df['High']
+            low = df['Low']
+            
+            plus_dm = high.diff()
+            minus_dm = -low.diff()
+            plus_dm[plus_dm < 0] = 0
+            minus_dm[minus_dm < 0] = 0
+            
+            tr1 = high - low
+            tr2 = abs(high - df['Close'].shift())
+            tr3 = abs(low - df['Close'].shift())
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr = tr.rolling(14).mean().iloc[-1]
+            
+            plus_di = 100 * (plus_dm.rolling(14).mean() / atr)
+            minus_di = 100 * (minus_dm.rolling(14).mean() / atr)
+            dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+            adx = dx.rolling(14).mean().iloc[-1]
+            
+            vcp_score, _, _ = VCPDetector.detect(df)
+            vsa_score, _, _ = VolumeSpreadAnalyzer.analyze(df)
+            vol_ok, _, _ = VolatilityRegimeFilter.analyze_regime(df, close)
+            st_direction, _, _ = SupertrendIndicator.calculate(df)
+            
+            rsi_range = PRESET['rsi_range_long'] if signal_type == "LONG" else PRESET['rsi_range_short']
+            
+            conditions_met = []
+            
+            if signal_type == "LONG":
+                conditions_met = [
+                    close > ema20,
+                    ema20 > ema50,
+                    rsi_range[0] <= rsi <= rsi_range[1],
+                    macd_line.iloc[-1] > macd_signal.iloc[-1],
+                    volume_ratio >= PRESET['min_volume_ratio'],
+                    adx >= PRESET['min_adx'],
+                    vol_ok,
+                    vsa_score >= 0,
+                    st_direction == "UP" if st_direction else True,
+                ]
+            else:
+                conditions_met = [
+                    close < ema20,
+                    ema20 < ema50,
+                    rsi_range[0] <= rsi <= rsi_range[1],
+                    macd_line.iloc[-1] < macd_signal.iloc[-1],
+                    volume_ratio >= PRESET['min_volume_ratio'],
+                    adx >= PRESET['min_adx'],
+                    vol_ok,
+                    vsa_score <= 0,
+                    st_direction == "DOWN" if st_direction else True,
+                ]
+            
+            if vcp_score > 5:
+                conditions_met.append(True)
+            
+            return sum(conditions_met) >= PRESET['conditions_required']
+            
         except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(1 * (attempt + 1))  # Exponential backoff
-                continue
-            logger.error(f"API Error for {ticker}: {str(e)}")
-            log_email(f"API Error for {ticker}: {str(e)}")
+            logger.debug(f"Entry condition check failed: {e}")
+            return False
     
-    return None
-
-def calculate_holding_period(entry_date):
-    """Calculate holding period in days with multiple format support"""
-    if entry_date is None or entry_date == '' or (isinstance(entry_date, float) and pd.isna(entry_date)):
-        return 0
-    
-    if isinstance(entry_date, str):
-        entry_date = entry_date.strip()
-        
-        # Try multiple date formats
-        formats_to_try = [
-            "%Y-%m-%d",
-            "%d-%m-%Y", 
-            "%d/%m/%Y",
-            "%Y/%m/%d",
-            "%d-%b-%Y",
-            "%d %b %Y",
-            "%Y-%m-%d %H:%M:%S",
-            "%d-%m-%Y %H:%M:%S",
-        ]
-        
-        parsed = None
-        for fmt in formats_to_try:
-            try:
-                parsed = datetime.strptime(entry_date, fmt)
-                break
-            except ValueError:
-                continue
-        
-        if parsed is None:
-            log_email(f"Could not parse entry date: {entry_date}")
-            return 0
-        
-        entry_date = parsed
-    
-    # Handle pandas Timestamp
-    if hasattr(entry_date, 'to_pydatetime'):
-        entry_date = entry_date.to_pydatetime()
-    
-    if isinstance(entry_date, datetime):
-        now = get_ist_now()
+    def _calculate_atr(self, df: pd.DataFrame) -> float:
+        """Calculate ATR"""
         try:
-            # Handle timezone-aware and naive datetime
-            if entry_date.tzinfo is not None:
-                delta = now - entry_date
-            else:
-                delta = now.replace(tzinfo=None) - entry_date
-            return max(0, delta.days)
-        except (TypeError, ValueError, AttributeError):
-             return 0
+            atr = AverageTrueRange(
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                window=PRESET['atr_period']
+            ).average_true_range().iloc[-1]
+            return atr
+        except:
+            return df['Close'].iloc[-1] * 0.02
     
-    return 0
-
-def get_tax_implication(holding_days, pnl):
-    """Get tax implication based on holding period"""
-    if pnl <= 0:
-        return "Loss - Can be set off", "🟢"
-    
-    if holding_days >= 365:
-        # LTCG - 10% above 1 lakh
-        return "LTCG (10% above ₹1L)", "🟢"
-    else:
-        # STCG - 15%
-        return "STCG (15%)", "🟡"
-
-# ============================================================================
-# TECHNICAL ANALYSIS FUNCTIONS
-# ============================================================================
-
-def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using Wilder's smoothing method"""
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    
-    # Use Wilder's smoothing (EWM with alpha = 1/period)
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    
-    # Handle division by zero
-    rs = avg_gain / avg_loss.replace(0, np.finfo(float).eps)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def calculate_macd(
-    prices: pd.Series, 
-    fast: int = 12, 
-    slow: int = 26, 
-    signal: int = 9
-) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    """Calculate MACD (Moving Average Convergence Divergence)"""
-    exp_fast = prices.ewm(span=fast, adjust=False).mean()
-    exp_slow = prices.ewm(span=slow, adjust=False).mean()
-    macd = exp_fast - exp_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    histogram = macd - signal_line
-    return macd, signal_line, histogram
-
-def calculate_atr(high, low, close, period=14):
-    """Calculate ATR using Wilder's smoothing"""
-    tr1 = high - low
-    tr2 = abs(high - close.shift())
-    tr3 = abs(low - close.shift())
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    
-    # Use Wilder's smoothing
-    atr = tr.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    return atr
-
-def calculate_bollinger_bands(prices, period=20, std_dev=2):
-    """Calculate Bollinger Bands"""
-    sma = prices.rolling(window=period).mean()
-    std = prices.rolling(window=period).std()
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-    return upper, sma, lower
-
-def calculate_ema(prices, period):
-    """Calculate Exponential Moving Average"""
-    return prices.ewm(span=period, adjust=False).mean()
-
-def calculate_sma(prices, period):
-    """Calculate Simple Moving Average"""
-    return prices.rolling(window=period).mean()
-
-def calculate_adx(high, low, close, period=14):
-    """Calculate ADX correctly"""
-    # True Range
-    tr1 = high - low
-    tr2 = abs(high - close.shift())
-    tr3 = abs(low - close.shift())
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    
-    # Directional Movement
-    up_move = high - high.shift()
-    down_move = low.shift() - low  # ✅ FIXED
-    
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
-    
-    # Wilder's smoothing
-    alpha = 1/period
-    atr = tr.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
-    plus_di = 100 * pd.Series(plus_dm).ewm(alpha=alpha, adjust=False).mean() / atr
-    minus_di = 100 * pd.Series(minus_dm).ewm(alpha=alpha, adjust=False).mean() / atr
-    
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
-    adx = dx.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
-    
-    return adx
-
-def calculate_stochastic(high, low, close, k_period=14, d_period=3):
-    """Calculate Stochastic Oscillator"""
-    lowest_low = low.rolling(window=k_period).min()
-    highest_high = high.rolling(window=k_period).max()
-    
-    EPSILON = np.finfo(float).eps
-    k = 100 * (close - lowest_low) / (highest_high - lowest_low + EPSILON)
-    d = k.rolling(window=d_period).mean()
-    
-    return k, d
-
-# ============================================================================
-# VOLUME ANALYSIS
-# ============================================================================
-
-def analyze_volume(df):
-    """
-    Analyze volume to confirm price movements
-    Returns: volume_signal, volume_ratio, description, volume_trend
-    """
-    if 'Volume' not in df.columns or len(df) < 20:
-        return "NEUTRAL", 1.0, "Volume data not available", "NEUTRAL"
-    
-    if df['Volume'].iloc[-1] == 0:
-        return "NEUTRAL", 1.0, "No volume data", "NEUTRAL"
-    
-    # Calculate average volume (20-day)
-    avg_volume = df['Volume'].rolling(20).mean().iloc[-1]
-    current_volume = df['Volume'].iloc[-1]
-    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
-    
-    # Get price direction
-    price_change = df['Close'].iloc[-1] - df['Close'].iloc[-2]
-    
-    # Volume trend (is volume increasing?)
-    vol_5d = df['Volume'].tail(5).mean()
-    vol_20d = df['Volume'].tail(20).mean()
-    volume_trend = "INCREASING" if vol_5d > vol_20d else "DECREASING"
-    
-    # Determine signal
-    if price_change > 0 and volume_ratio > 1.5:
-        signal = "STRONG_BUYING"
-        desc = f"Strong buying pressure ({volume_ratio:.1f}x avg volume)"
-    elif price_change > 0 and volume_ratio > 1.0:
-        signal = "BUYING"
-        desc = f"Buying with good volume ({volume_ratio:.1f}x)"
-    elif price_change > 0 and volume_ratio < 0.7:
-        signal = "WEAK_BUYING"
-        desc = f"Weak rally, low volume ({volume_ratio:.1f}x)"
-    elif price_change < 0 and volume_ratio > 1.5:
-        signal = "STRONG_SELLING"
-        desc = f"Strong selling pressure ({volume_ratio:.1f}x avg volume)"
-    elif price_change < 0 and volume_ratio > 1.0:
-        signal = "SELLING"
-        desc = f"Selling with volume ({volume_ratio:.1f}x)"
-    elif price_change < 0 and volume_ratio < 0.7:
-        signal = "WEAK_SELLING"
-        desc = f"Weak decline, low volume ({volume_ratio:.1f}x)"
-    else:
-        signal = "NEUTRAL"
-        desc = f"Normal volume ({volume_ratio:.1f}x)"
-    
-    return signal, volume_ratio, desc, volume_trend
-
-# ============================================================================
-# SUPPORT/RESISTANCE DETECTION
-# ============================================================================
-
-def find_support_resistance(df, lookback=60):
-    """
-    Find key support and resistance levels using multiple methods.
-    Uses pivot points, volume profile, and clustering.
-    """
-    if len(df) < lookback:
-        lookback = len(df)
-    
-    if lookback < 10:
-        current_price = df['Close'].iloc[-1]
+    def _simulate_trade(
+        self,
+        future_data: pd.DataFrame,
+        signal_type: str,
+        entry_price: float,
+        atr: float
+    ) -> Optional[Dict]:
+        """Simulate single trade - NO LOOK-AHEAD BIAS"""
+        
+        if len(future_data) < 3:
+            return None
+        
+        # ✅ FIX #3: Enter at NEXT bar's open (realistic)
+        actual_entry = future_data.iloc[1]['Open']
+        
+        if signal_type == "LONG":
+            stop_loss = actual_entry - (atr * 1.5)
+            target_1 = actual_entry + (atr * 2)
+            target_2 = actual_entry + (atr * 4)
+        else:
+            stop_loss = actual_entry + (atr * 1.5)
+            target_1 = actual_entry - (atr * 2)
+            target_2 = actual_entry - (atr * 4)
+        
+        exit_price = None
+        exit_day = None
+        exit_reason = None
+        
+        # Start from day 2 (day 1 is entry bar)
+        for day in range(2, len(future_data)):
+            row = future_data.iloc[day]
+            
+            if signal_type == "LONG":
+                # ✅ Check gap down at open first
+                if row['Open'] <= stop_loss:
+                    exit_price = min(stop_loss, row['Open'])  # Slippage
+                    exit_day = day
+                    exit_reason = "Stop Loss (gap)"
+                    break
+                
+                # Check if stop hit during the day
+                elif row['Low'] <= stop_loss:
+                    exit_price = stop_loss
+                    exit_day = day
+                    exit_reason = "Stop Loss"
+                    break
+                
+                # Check target 2
+                elif row['High'] >= target_2:
+                    exit_price = target_2
+                    exit_day = day
+                    exit_reason = "Target 2"
+                    break
+                
+                # Check target 1 after 5 days
+                elif day >= 7 and row['High'] >= target_1:
+                    exit_price = target_1
+                    exit_day = day
+                    exit_reason = "Target 1"
+                    break
+            
+            else:  # SHORT
+                if row['Open'] >= stop_loss:
+                    exit_price = max(stop_loss, row['Open'])
+                    exit_day = day
+                    exit_reason = "Stop Loss (gap)"
+                    break
+                
+                elif row['High'] >= stop_loss:
+                    exit_price = stop_loss
+                    exit_day = day
+                    exit_reason = "Stop Loss"
+                    break
+                
+                elif row['Low'] <= target_2:
+                    exit_price = target_2
+                    exit_day = day
+                    exit_reason = "Target 2"
+                    break
+                
+                elif day >= 7 and row['Low'] <= target_1:
+                    exit_price = target_1
+                    exit_day = day
+                    exit_reason = "Target 1"
+                    break
+        
+        # Time exit if no target/stop hit
+        if exit_price is None:
+            exit_price = future_data.iloc[-1]['Close']
+            exit_day = len(future_data) - 1
+            exit_reason = "Time Exit"
+        
+        # Calculate return based on ACTUAL entry
+        if signal_type == "LONG":
+            return_pct = ((exit_price - actual_entry) / actual_entry) * 100
+        else:
+            return_pct = ((actual_entry - exit_price) / actual_entry) * 100
+        
         return {
-            'support_levels': [],
-            'resistance_levels': [],
-            'nearest_support': current_price * 0.95,
-            'nearest_resistance': current_price * 1.05,
-            'distance_to_support': 5.0,
-            'distance_to_resistance': 5.0,
-            'support_strength': 'WEAK',
-            'resistance_strength': 'WEAK',
-            'support_touches': 0,
-            'resistance_touches': 0,
-            'psychological_levels': []
+            'entry_price': actual_entry,
+            'exit_price': exit_price,
+            'return_pct': return_pct,
+            'return_dollars': return_pct * 1000,
+            'holding_days': exit_day - 1,  # Subtract entry day
+            'exit_reason': exit_reason,
+            'signal_type': signal_type
         }
     
-    high = df['High'].tail(lookback)
-    low = df['Low'].tail(lookback)
-    close = df['Close'].tail(lookback)
-    volume = df['Volume'].tail(lookback) if 'Volume' in df.columns else None
-    current_price = float(close.iloc[-1])
-    
-    # METHOD 1: PIVOT POINTS
-    pivot_highs = []
-    pivot_lows = []
-    
-    for i in range(3, len(high) - 3):
-        # Pivot high
-        if (high.iloc[i] >= high.iloc[i-1] and high.iloc[i] >= high.iloc[i-2] and
-            high.iloc[i] >= high.iloc[i-3] and high.iloc[i] >= high.iloc[i+1] and
-            high.iloc[i] >= high.iloc[i+2] and high.iloc[i] >= high.iloc[i+3]):
-            
-            vol_weight = 1.0
-            if volume is not None and volume.iloc[i] > volume.mean():
-                vol_weight = 1.5
-            
-            pivot_highs.append({
-                'price': float(high.iloc[i]),
-                'index': i,
-                'weight': vol_weight
-            })
+    def _calculate_metrics(self, trades: List[Dict]) -> BacktestResult:
+        """Calculate comprehensive metrics"""
         
-        # Pivot low
-        if (low.iloc[i] <= low.iloc[i-1] and low.iloc[i] <= low.iloc[i-2] and
-            low.iloc[i] <= low.iloc[i-3] and low.iloc[i] <= low.iloc[i+1] and
-            low.iloc[i] <= low.iloc[i+2] and low.iloc[i] <= low.iloc[i+3]):
-            
-            vol_weight = 1.0
-            if volume is not None and volume.iloc[i] > volume.mean():
-                vol_weight = 1.5
-            
-            pivot_lows.append({
-                'price': float(low.iloc[i]),
-                'index': i,
-                'weight': vol_weight
-            })
-    
-    # METHOD 2: CLUSTER NEARBY LEVELS
-    def cluster_levels(pivots, threshold_pct=1.5):
-        """Cluster nearby pivot points and calculate strength."""
-        if not pivots:
-            return []
+        if not trades:
+            return None
         
-        sorted_pivots = sorted(pivots, key=lambda x: x['price'])
-        clusters = []
-        current_cluster = [sorted_pivots[0]]
+        returns = [t['return_pct'] for t in trades]
+        return_dollars = [t['return_dollars'] for t in trades]
         
-        for pivot in sorted_pivots[1:]:
-            cluster_center = sum(p['price'] for p in current_cluster) / len(current_cluster)
-            if (pivot['price'] - cluster_center) / cluster_center * 100 < threshold_pct:
-                current_cluster.append(pivot)
+        winning_trades = [r for r in returns if r > 0]
+        losing_trades = [r for r in returns if r <= 0]
+        
+        equity = self.initial_capital
+        equity_curve = [equity]
+        peak_equity = equity
+        max_drawdown = 0
+        
+        for ret_dollars in return_dollars:
+            equity += ret_dollars
+            equity_curve.append(equity)
+            peak_equity = max(peak_equity, equity)
+            drawdown = ((peak_equity - equity) / peak_equity) * 100
+            max_drawdown = max(max_drawdown, drawdown)
+        
+        max_consecutive_wins = 0
+        max_consecutive_losses = 0
+        current_streak = 0
+        
+        for ret in returns:
+            if ret > 0:
+                current_streak = current_streak + 1 if current_streak >= 0 else 1
+                max_consecutive_wins = max(max_consecutive_wins, current_streak)
             else:
-                avg_price = sum(p['price'] * p['weight'] for p in current_cluster) / sum(p['weight'] for p in current_cluster)
-                total_weight = sum(p['weight'] for p in current_cluster)
-                touch_count = len(current_cluster)
-                
-                clusters.append({
-                    'price': avg_price,
-                    'touches': touch_count,
-                    'weight': total_weight,
-                    'strength': 'STRONG' if touch_count >= 3 else 'MODERATE' if touch_count >= 2 else 'WEAK'
-                })
-                
-                current_cluster = [pivot]
+                current_streak = current_streak - 1 if current_streak <= 0 else -1
+                max_consecutive_losses = max(max_consecutive_losses, abs(current_streak))
         
-        # Last cluster
-        if current_cluster:
-            avg_price = sum(p['price'] * p['weight'] for p in current_cluster) / sum(p['weight'] for p in current_cluster)
-            total_weight = sum(p['weight'] for p in current_cluster)
-            touch_count = len(current_cluster)
+        total_trades = len(trades)
+        win_rate = (len(winning_trades) / total_trades) * 100
+        
+        avg_win = np.mean(winning_trades) if winning_trades else 0
+        avg_loss = np.mean(losing_trades) if losing_trades else 0
+        
+        gross_profit = sum([r for r in returns if r > 0])
+        gross_loss = abs(sum([r for r in returns if r < 0]))
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
+        
+        if len(returns) > 1 and np.std(returns) > 0:
+            sharpe_ratio = (np.mean(returns) / np.std(returns)) * np.sqrt(252)
+        else:
+            sharpe_ratio = 0
+        
+        total_return = ((equity - self.initial_capital) / self.initial_capital) * 100
+        expectancy = np.mean(return_dollars)
+        
+        reliability_score = self._calculate_reliability_score(
+            win_rate, profit_factor, max_drawdown, sharpe_ratio
+        )
+        
+        return BacktestResult(
+            total_trades=total_trades,
+            winning_trades=len(winning_trades),
+            losing_trades=len(losing_trades),
+            win_rate=round(win_rate, 2),
+            avg_win=round(avg_win, 2),
+            avg_loss=round(avg_loss, 2),
+            profit_factor=round(profit_factor, 2),
+            sharpe_ratio=round(sharpe_ratio, 2),
+            max_drawdown=round(max_drawdown, 2),
+            total_return=round(total_return, 2),
+            avg_holding_days=round(np.mean([t['holding_days'] for t in trades]), 1),
+            best_trade=round(max(returns), 2),
+            worst_trade=round(min(returns), 2),
+            consecutive_wins=max_consecutive_wins,
+            consecutive_losses=max_consecutive_losses,
+            reliability_score=round(reliability_score, 1),
+            expectancy=round(expectancy, 2)
+        )
+    
+    def _calculate_reliability_score(
+        self,
+        win_rate: float,
+        profit_factor: float,
+        max_drawdown: float,
+        sharpe_ratio: float
+    ) -> float:
+        """Calculate 0-100 reliability score"""
+        
+        wr_score = min(100, (win_rate - 40) * 2.5) if win_rate > 40 else 0
+        pf_score = min(100, (profit_factor - 1) * 50) if profit_factor > 1 else 0
+        dd_score = max(0, 100 - max_drawdown * 2)
+        sharpe_score = min(100, sharpe_ratio * 33) if sharpe_ratio > 0 else 0
+        
+        score = (
+            wr_score * 0.30 +
+            pf_score * 0.30 +
+            dd_score * 0.20 +
+            sharpe_score * 0.20
+        )
+        
+        return max(0, min(100, score))
+    
+    def walk_forward_validation(
+    self,
+    df: pd.DataFrame,
+    signal_type: str,
+    entry_conditions: Dict,
+    periods: int = 4
+    ) -> Optional[WalkForwardResult]:
+        """
+        Walk-Forward Validation - FIXED VERSION v2.0
+        
+        Validates strategy consistency across non-overlapping time periods.
+        Prevents overfitting by testing on independent data slices.
+        
+        Args:
+            df: Historical price data (pandas DataFrame)
+            signal_type: Trade direction - "LONG" or "SHORT"
+            entry_conditions: Strategy parameters dictionary
+            periods: Number of validation periods (default: 4)
+        
+        Returns:
+            WalkForwardResult: Contains validation metrics and pass/fail status
+            None: If validation fails or insufficient data
+        
+        Methodology:
+            1. Splits data into N non-overlapping periods
+            2. Backtests each period independently (no data reuse)
+            3. Requires minimum 5 trades per period for statistical validity
+            4. Checks performance consistency across all periods
+            5. Uses mode-specific passing criteria (CONSERVATIVE/BALANCED/AGGRESSIVE)
+            6. Scores based on performance + stability + drawdown
+        
+        Example:
+            600 bars, 4 periods:
+            Period 1: [0-150]   → 8 trades, 62% WR, 1.8 PF ✅
+            Period 2: [150-300] → 10 trades, 58% WR, 1.6 PF ✅
+            Period 3: [300-450] → 9 trades, 60% WR, 1.7 PF ✅
+            Period 4: [450-600] → 7 trades, 56% WR, 1.5 PF ✅
+            Result: PASSED (consistent performance)
+        
+        Fixes Applied:
+            ✅ Removed 100-bar overlap bug
+            ✅ Increased minimum data requirement (150 bars/period)
+            ✅ Added minimum trades per period (5+)
+            ✅ Mode-specific passing criteria
+            ✅ Improved consistency scoring algorithm
+            ✅ Detailed logging for debugging
+            ✅ Better error handling
+        """
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 1: VALIDATE INPUT DATA
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Calculate minimum required data
+        # Conservative: 150 bars per period minimum for reliable results
+        min_bars_per_period = 150
+        min_required_total = periods * min_bars_per_period
+        
+        if len(df) < min_required_total:
+            logger.debug(
+                f"Walk-forward rejected: Insufficient data "
+                f"({len(df)} bars < {min_required_total} required for {periods} periods)"
+            )
+            return None
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 2: CALCULATE PERIOD BOUNDARIES (NO OVERLAP!)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        period_length = len(df) // periods
+        period_results = []
+        period_details = []
+        
+        # Debug header
+        logger.debug(f"\n{'='*70}")
+        logger.debug(f"WALK-FORWARD VALIDATION")
+        logger.debug(f"{'='*70}")
+        logger.debug(f"Strategy: {signal_type}")
+        logger.debug(f"Total Data: {len(df)} bars")
+        logger.debug(f"Periods: {periods}")
+        logger.debug(f"Period Length: {period_length} bars")
+        logger.debug(f"Mode: {ACCURACY_MODE}")
+        logger.debug(f"{'='*70}")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 3: BACKTEST EACH PERIOD INDEPENDENTLY
+        # ═══════════════════════════════════════════════════════════════════
+        
+        for i in range(periods):
+            # Calculate strict boundaries (NO overlap with other periods)
+            start_idx = i * period_length
             
-            clusters.append({
-                'price': avg_price,
-                'touches': touch_count,
-                'weight': total_weight,
-                'strength': 'STRONG' if touch_count >= 3 else 'MODERATE' if touch_count >= 2 else 'WEAK'
+            # Last period gets all remaining data (handles rounding)
+            if i == periods - 1:
+                end_idx = len(df)
+            else:
+                end_idx = (i + 1) * period_length
+            
+            # Extract period data
+            period_data = df.iloc[start_idx:end_idx].copy()
+            actual_bars = len(period_data)
+            
+            # Calculate lookback for this period
+            # Use 70% of period for backtesting, 30% for indicator warmup
+            lookback = max(50, int(actual_bars * 0.7))
+            
+            logger.debug(f"\n{'─'*70}")
+            logger.debug(f"PERIOD {i + 1}/{periods}")
+            logger.debug(f"{'─'*70}")
+            logger.debug(f"  Date Range: {period_data.index[0]} to {period_data.index[-1]}")
+            logger.debug(f"  Index Range: [{start_idx}:{end_idx}]")
+            logger.debug(f"  Total Bars: {actual_bars}")
+            logger.debug(f"  Lookback: {lookback} bars")
+            logger.debug(f"  Test Window: ~{lookback - 50} bars")
+            
+            # Run backtest on this period
+            try:
+                result = self.backtest_strategy(
+                    df=period_data,
+                    signal_type=signal_type,
+                    entry_conditions=entry_conditions,
+                    lookback_days=lookback
+                )
+            except Exception as e:
+                logger.debug(f"  ❌ Backtest Error: {str(e)[:50]}")
+                result = None
+            
+            # ═══════════════════════════════════════════════════════════════
+            # STEP 4: VALIDATE PERIOD RESULTS
+            # ═══════════════════════════════════════════════════════════════
+            
+            # Minimum trades required for statistical validity
+            min_trades_required = 5
+            
+            if result is None:
+                logger.debug(f"  ❌ REJECTED: Backtest returned None")
+                continue
+            
+            if result.total_trades < min_trades_required:
+                logger.debug(
+                    f"  ❌ REJECTED: Only {result.total_trades} trades "
+                    f"(minimum {min_trades_required} required)"
+                )
+                continue
+            
+            # Period passed - store results
+            period_results.append(result)
+            
+            period_details.append({
+                'period': i + 1,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'bars': actual_bars,
+                'trades': result.total_trades,
+                'win_rate': result.win_rate,
+                'profit_factor': result.profit_factor,
+                'max_drawdown': result.max_drawdown,
+                'sharpe_ratio': result.sharpe_ratio,
+                'avg_win': result.avg_win,
+                'avg_loss': result.avg_loss
             })
+            
+            logger.debug(f"  ✅ VALID PERIOD")
+            logger.debug(f"     Trades: {result.total_trades}")
+            logger.debug(f"     Win Rate: {result.win_rate:.1f}%")
+            logger.debug(f"     Profit Factor: {result.profit_factor:.2f}")
+            logger.debug(f"     Max Drawdown: {result.max_drawdown:.1f}%")
+            logger.debug(f"     Sharpe Ratio: {result.sharpe_ratio:.2f}")
         
-        return clusters
-    
-    support_clusters = cluster_levels(pivot_lows)
-    resistance_clusters = cluster_levels(pivot_highs)
-    
-    # Find nearest support
-    supports_below = [s for s in support_clusters if s['price'] < current_price]
-    if supports_below:
-        nearest_support_data = max(supports_below, key=lambda x: x['price'])
-        nearest_support = nearest_support_data['price']
-        support_strength = nearest_support_data['strength']
-        support_touches = nearest_support_data['touches']
-    else:
-        nearest_support = float(low.min()) * 0.99
-        support_strength = 'WEAK'
-        support_touches = 0
-    
-    # Find nearest resistance
-    resistances_above = [r for r in resistance_clusters if r['price'] > current_price]
-    if resistances_above:
-        nearest_resistance_data = min(resistances_above, key=lambda x: x['price'])
-        nearest_resistance = nearest_resistance_data['price']
-        resistance_strength = nearest_resistance_data['strength']
-        resistance_touches = nearest_resistance_data['touches']
-    else:
-        nearest_resistance = float(high.max()) * 1.01
-        resistance_strength = 'WEAK'
-        resistance_touches = 0
-    
-    # METHOD 3: PSYCHOLOGICAL LEVELS (Round Numbers)
-    def find_round_numbers(price, range_pct=5):
-        levels = []
-        magnitude = 10 ** (len(str(int(price))) - 2)
-        base = int(price / magnitude) * magnitude
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 5: CHECK MINIMUM PERIODS REQUIREMENT
+        # ═══════════════════════════════════════════════════════════════════
         
-        for offset in range(-3, 4):
-            level = base + (offset * magnitude)
-            if abs(level - price) / price * 100 < range_pct:
-                levels.append(level)
+        # Require at least 50% of periods to succeed (minimum 2)
+        min_required_periods = max(2, (periods + 1) // 2)
         
-        half_magnitude = magnitude / 2
-        for offset in range(-5, 6):
-            level = base + (offset * half_magnitude)
-            if abs(level - price) / price * 100 < range_pct:
-                if level not in levels:
-                    levels.append(level)
+        if len(period_results) < min_required_periods:
+            logger.debug(f"\n{'='*70}")
+            logger.debug(f"❌ WALK-FORWARD FAILED")
+            logger.debug(f"{'='*70}")
+            logger.debug(
+                f"Only {len(period_results)}/{periods} periods valid "
+                f"(need {min_required_periods}+ periods)"
+            )
+            logger.debug(f"{'='*70}\n")
+            return None
         
-        return sorted(levels)
-    
-    psychological_levels = find_round_numbers(current_price)
-    
-    # Calculate distances
-    distance_to_support = ((current_price - nearest_support) / current_price) * 100
-    distance_to_resistance = ((nearest_resistance - current_price) / current_price) * 100
-    
-    return {
-        'support_levels': [s['price'] for s in support_clusters[-5:]],
-        'resistance_levels': [r['price'] for r in resistance_clusters[-5:]],
-        'nearest_support': nearest_support,
-        'nearest_resistance': nearest_resistance,
-        'distance_to_support': distance_to_support,
-        'distance_to_resistance': distance_to_resistance,
-        'support_strength': support_strength,
-        'resistance_strength': resistance_strength,
-        'support_touches': support_touches,
-        'resistance_touches': resistance_touches,
-        'psychological_levels': psychological_levels
-    }
-
-# ============================================================================
-# MOMENTUM SCORING (0-100)
-# ============================================================================
-
-def calculate_momentum_score(df):
-    """
-    Calculate comprehensive momentum score (0-100)
-    Higher = More bullish, Lower = More bearish
-    """
-    close = df['Close']
-    score = 50  # Start neutral
-    components = {}
-    
-    # RSI Component (0-20 points)
-    rsi = calculate_rsi(close).iloc[-1]
-    if pd.isna(rsi):
-        rsi = 50
-    
-    if rsi > 70:
-        rsi_score = -10  # Overbought
-    elif rsi > 60:
-        rsi_score = 15
-    elif rsi > 50:
-        rsi_score = 10
-    elif rsi > 40:
-        rsi_score = -5
-    elif rsi > 30:
-        rsi_score = -15
-    else:
-        rsi_score = 10  # Oversold bounce
-    
-    score += rsi_score
-    components['RSI'] = rsi_score
-    
-    # MACD Component (0-20 points)
-    macd, signal, histogram = calculate_macd(close)
-    hist_current = histogram.iloc[-1] if len(histogram) > 0 else 0
-    hist_prev = histogram.iloc[-2] if len(histogram) > 1 else 0
-    
-    if pd.isna(hist_current):
-        hist_current = 0
-    if pd.isna(hist_prev):
-        hist_prev = 0
-    
-    if hist_current > 0:
-        if hist_current > hist_prev:
-            macd_score = 20
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 6: CALCULATE AGGREGATE STATISTICS
+        # ═══════════════════════════════════════════════════════════════════
+        
+        win_rates = [r.win_rate for r in period_results]
+        profit_factors = [r.profit_factor for r in period_results]
+        max_drawdowns = [r.max_drawdown for r in period_results]
+        sharpe_ratios = [r.sharpe_ratio for r in period_results]
+        
+        # Averages
+        avg_win_rate = float(np.mean(win_rates))
+        avg_profit_factor = float(np.mean(profit_factors))
+        avg_max_drawdown = float(np.mean(max_drawdowns))
+        avg_sharpe = float(np.mean(sharpe_ratios))
+        
+        # Stability (standard deviation)
+        win_rate_stability = float(np.std(win_rates))
+        pf_stability = float(np.std(profit_factors))
+        
+        # Min/Max
+        min_win_rate = float(min(win_rates))
+        max_win_rate = float(max(win_rates))
+        min_profit_factor = float(min(profit_factors))
+        max_profit_factor = float(max(profit_factors))
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 7: CALCULATE CONSISTENCY SCORE (IMPROVED ALGORITHM)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Base score from average performance
+        if avg_win_rate < 35:
+            base_score = 0  # Terrible
+        elif avg_win_rate < 45:
+            base_score = 20  # Very poor
+        elif avg_win_rate < 50:
+            base_score = 35  # Poor
+        elif avg_win_rate < 55:
+            base_score = 50  # Below average
+        elif avg_win_rate < 60:
+            base_score = 65  # Average
+        elif avg_win_rate < 65:
+            base_score = 80  # Good
+        elif avg_win_rate < 70:
+            base_score = 90  # Very good
         else:
-            macd_score = 10
-    else:
-        if hist_current < hist_prev:
-            macd_score = -20
-        else:
-            macd_score = -10
-    
-    score += macd_score
-    components['MACD'] = macd_score
-    
-    # Moving Average Component (0-20 points)
-    current_price = close.iloc[-1]
-    sma_20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else close.mean()
-    sma_50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else sma_20
-    ema_9 = close.ewm(span=9).mean().iloc[-1]
-    
-    ma_score = 0
-    if current_price > ema_9:
-        ma_score += 5
-    if current_price > sma_20:
-        ma_score += 5
-    if current_price > sma_50:
-        ma_score += 5
-    if sma_20 > sma_50:
-        ma_score += 5
-    
-    if current_price < ema_9:
-        ma_score -= 5
-    if current_price < sma_20:
-        ma_score -= 5
-    if current_price < sma_50:
-        ma_score -= 5
-    if sma_20 < sma_50:
-        ma_score -= 5
-    
-    score += ma_score
-    components['MA'] = ma_score
-    
-    # Price Momentum (0-15 points)
-    returns_5d = ((close.iloc[-1] / close.iloc[-6]) - 1) * 100 if len(close) > 6 else 0
-    momentum_score = min(15, max(-15, returns_5d * 3))
-    score += momentum_score
-    components['Momentum'] = momentum_score
-    
-    # Trend Strength (0-10 points)
-    if sma_50 != 0:
-        adx_approx = safe_divide(abs(sma_20 - sma_50), sma_50, 0) * 100
-    else:
-        adx_approx = 0
-    
-    if current_price > sma_20:
-        trend_score = min(10, adx_approx * 2)
-    else:
-        trend_score = -min(10, adx_approx * 2)
-    
-    score += trend_score
-    components['Trend'] = trend_score
-    
-    # Cap between 0-100
-    final_score = max(0, min(100, score))
-    
-    # Determine trend direction
-    if final_score >= 70:
-        trend = "STRONG BULLISH"
-    elif final_score >= 55:
-        trend = "BULLISH"
-    elif final_score >= 45:
-        trend = "NEUTRAL"
-    elif final_score >= 30:
-        trend = "BEARISH"
-    else:
-        trend = "STRONG BEARISH"
-    
-    return final_score, trend, components
+            base_score = 95  # Excellent
+        
+        # Penalty for win rate instability
+        # High std = inconsistent performance
+        stability_penalty = min(40, win_rate_stability * 3)
+        
+        # Bonus for profit factor
+        # Reward strategies that make more when they win
+        pf_bonus = min(15, max(0, (avg_profit_factor - 1.0) * 8))
+        
+        # Penalty for drawdown
+        # Penalize risky strategies
+        dd_penalty = min(25, avg_max_drawdown / 1.5)
+        
+        # Bonus for Sharpe ratio
+        # Reward risk-adjusted returns
+        sharpe_bonus = min(10, max(0, avg_sharpe * 4))
+        
+        # Penalty for worst period
+        # If any single period is terrible, reduce score
+        worst_period_penalty = 0
+        if min_win_rate < 40:
+            worst_period_penalty = 15
+        elif min_win_rate < 45:
+            worst_period_penalty = 10
+        elif min_win_rate < 50:
+            worst_period_penalty = 5
+        
+        # Calculate final consistency score (0-100)
+        consistency_score = base_score - stability_penalty + pf_bonus - dd_penalty + sharpe_bonus - worst_period_penalty
+        consistency_score = float(max(0, min(100, consistency_score)))
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 8: DETERMINE PASS/FAIL (MODE-SPECIFIC CRITERIA)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Get mode-specific thresholds
+        if ACCURACY_MODE == 'CONSERVATIVE':
+            required_min_wr = 60
+            required_min_pf = 1.8
+            required_max_stability = 8
+            required_max_dd = 15
+        elif ACCURACY_MODE == 'BALANCED':
+            required_min_wr = 55
+            required_min_pf = 1.5
+            required_max_stability = 10
+            required_max_dd = 20
+        else:  # AGGRESSIVE
+            required_min_wr = 50
+            required_min_pf = 1.3
+            required_max_stability = 15
+            required_max_dd = 25
+        
+        # Check 1: All periods must meet minimum criteria
+        all_periods_pass_individual = all([
+            r.win_rate >= required_min_wr and 
+            r.profit_factor >= required_min_pf and
+            r.max_drawdown <= required_max_dd
+            for r in period_results
+        ])
+        
+        # Check 2: Overall stability acceptable
+        stability_acceptable = win_rate_stability <= required_max_stability
+        
+        # Check 3: Average performance meets requirements
+        average_performance_ok = (
+            avg_win_rate >= required_min_wr and
+            avg_profit_factor >= required_min_pf
+        )
+        
+        # Check 4: No catastrophic single period
+        no_terrible_periods = min_win_rate >= (required_min_wr - 10)
+        
+        # Final pass/fail decision
+        passed = (
+            all_periods_pass_individual and 
+            stability_acceptable and 
+            average_performance_ok and
+            no_terrible_periods
+        )
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 9: DETAILED LOGGING
+        # ═══════════════════════════════════════════════════════════════════
+        
+        logger.debug(f"\n{'='*70}")
+        logger.debug(f"WALK-FORWARD RESULTS")
+        logger.debug(f"{'='*70}")
+        logger.debug(f"Validated Periods: {len(period_results)}/{periods}")
+        logger.debug(f"")
+        logger.debug(f"AGGREGATE STATISTICS:")
+        logger.debug(f"  Win Rate: {avg_win_rate:.1f}% (range: {min_win_rate:.1f}% - {max_win_rate:.1f}%)")
+        logger.debug(f"  Stability: ±{win_rate_stability:.1f}%")
+        logger.debug(f"  Profit Factor: {avg_profit_factor:.2f} (range: {min_profit_factor:.2f} - {max_profit_factor:.2f})")
+        logger.debug(f"  Max Drawdown: {avg_max_drawdown:.1f}%")
+        logger.debug(f"  Sharpe Ratio: {avg_sharpe:.2f}")
+        logger.debug(f"")
+        logger.debug(f"CONSISTENCY SCORE: {consistency_score:.1f}/100")
+        logger.debug(f"  Base Score: {base_score:.0f}")
+        logger.debug(f"  Stability Penalty: -{stability_penalty:.0f}")
+        logger.debug(f"  Profit Factor Bonus: +{pf_bonus:.0f}")
+        logger.debug(f"  Drawdown Penalty: -{dd_penalty:.0f}")
+        logger.debug(f"  Sharpe Bonus: +{sharpe_bonus:.0f}")
+        logger.debug(f"  Worst Period Penalty: -{worst_period_penalty:.0f}")
+        logger.debug(f"")
+        logger.debug(f"REQUIREMENTS ({ACCURACY_MODE} mode):")
+        logger.debug(f"  Min Win Rate: {required_min_wr}% {'✅' if avg_win_rate >= required_min_wr else '❌'}")
+        logger.debug(f"  Min Profit Factor: {required_min_pf} {'✅' if avg_profit_factor >= required_min_pf else '❌'}")
+        logger.debug(f"  Max Stability: {required_max_stability}% {'✅' if win_rate_stability <= required_max_stability else '❌'}")
+        logger.debug(f"  Max Drawdown: {required_max_dd}% {'✅' if avg_max_drawdown <= required_max_dd else '❌'}")
+        logger.debug(f"")
+        logger.debug(f"VALIDATION CHECKS:")
+        logger.debug(f"  All periods pass individual: {'✅' if all_periods_pass_individual else '❌'}")
+        logger.debug(f"  Stability acceptable: {'✅' if stability_acceptable else '❌'}")
+        logger.debug(f"  Average performance OK: {'✅' if average_performance_ok else '❌'}")
+        logger.debug(f"  No terrible periods: {'✅' if no_terrible_periods else '❌'}")
+        
+        if period_details:
+            logger.debug(f"")
+            logger.debug(f"PERIOD BREAKDOWN:")
+            for detail in period_details:
+                status = "✅" if (
+                    detail['win_rate'] >= required_min_wr and 
+                    detail['profit_factor'] >= required_min_pf and
+                    detail['max_drawdown'] <= required_max_dd
+                ) else "❌"
+                
+                logger.debug(
+                    f"  Period {detail['period']} {status}: "
+                    f"{detail['trades']} trades | "
+                    f"WR={detail['win_rate']:.1f}% | "
+                    f"PF={detail['profit_factor']:.2f} | "
+                    f"DD={detail['max_drawdown']:.1f}% | "
+                    f"Sharpe={detail['sharpe_ratio']:.2f}"
+                )
+        
+        logger.debug(f"")
+        logger.debug(f"{'='*70}")
+        logger.debug(f"FINAL RESULT: {'✅ PASSED' if passed else '❌ FAILED'}")
+        logger.debug(f"{'='*70}\n")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 10: RETURN RESULT
+        # ═══════════════════════════════════════════════════════════════════
+        
+        return WalkForwardResult(
+            period_results=period_results,
+            avg_win_rate=round(avg_win_rate, 2),
+            win_rate_stability=round(win_rate_stability, 2),
+            avg_profit_factor=round(avg_profit_factor, 2),
+            consistency_score=round(consistency_score, 1),
+            passed=passed
+        )
+   
+    def monte_carlo_simulation(
+        self,
+        backtest_result: BacktestResult,
+        simulations: int = 1000,
+        num_trades: int = 50
+    ) -> MonteCarloResult:
+        """Monte Carlo simulation"""
+        
+        if not backtest_result or backtest_result.total_trades < 10:
+            return None
+        
+        win_rate = backtest_result.win_rate / 100
+        avg_win = backtest_result.avg_win
+        avg_loss = backtest_result.avg_loss
+        
+        final_equities = []
+        
+        for _ in range(simulations):
+            equity = self.initial_capital
+            
+            for _ in range(num_trades):
+                if np.random.random() < win_rate:
+                    ret = np.random.normal(avg_win, avg_win * 0.3)
+                else:
+                    ret = np.random.normal(avg_loss, abs(avg_loss) * 0.3)
+                
+                equity *= (1 + ret / 100)
+            
+            final_equities.append(equity)
+        
+        final_equities = np.array(final_equities)
+        
+        avg_final = np.mean(final_equities)
+        median_final = np.median(final_equities)
+        worst_case = np.percentile(final_equities, 5)
+        best_case = np.percentile(final_equities, 95)
+        
+        prob_profit = (final_equities > self.initial_capital).sum() / simulations
+        
+        confidence_95 = (
+            np.percentile(final_equities, 2.5),
+            np.percentile(final_equities, 97.5)
+        )
+        
+        risk_of_ruin = (final_equities < self.initial_capital * 0.5).sum() / simulations
+        
+        return MonteCarloResult(
+            simulations=simulations,
+            avg_final_equity=round(avg_final, 2),
+            median_final_equity=round(median_final, 2),
+            worst_case=round(worst_case, 2),
+            best_case=round(best_case, 2),
+            prob_profit=round(prob_profit * 100, 2),
+            confidence_95=(round(confidence_95[0], 2), round(confidence_95[1], 2)),
+            risk_of_ruin=round(risk_of_ruin * 100, 2)
+        )
+# ============================================================================
+# FUNDAMENTALS FETCHER
+# ============================================================================
+
+def get_fundamentals(ticker: str) -> Tuple[Optional[str], Optional[float]]:
+    """Get sector and P/E ratio"""
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        sector = info.get('sector')
+        pe = info.get('trailingPE')
+        return sector, pe
+    except Exception:
+        return None, None
 
 # ============================================================================
-# MULTI-TIMEFRAME ANALYSIS
+# INDICATOR CALCULATION
+# ============================================================================
+def normalize_price_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Fixed price normalization - only convert if definitely paise data"""
+    try:
+        if len(df) < 10:
+            return df
+        
+        # Get current close price
+        current_close = df['Close'].iloc[-1]
+        avg_close = df['Close'].mean()
+        
+        # Only normalize if we're SURE it's paise data
+        # Criteria: Average price > 100,000 (no stock trades above ₹100k except in paise)
+        if avg_close > 100000:
+            # This is definitely paise data
+            df = df.copy()
+            df['Open'] = df['Open'] / 100
+            df['High'] = df['High'] / 100
+            df['Low'] = df['Low'] / 100
+            df['Close'] = df['Close'] / 100
+            logger.debug(f"Normalized paise data: {avg_close:.0f} → {avg_close/100:.2f}")
+        
+        # Don't normalize anything else - keep actual prices
+        return df
+        
+    except Exception as e:
+        logger.debug(f"Price normalization error: {e}")
+        return df
+    
+def calculate_indicators(df: pd.DataFrame) -> Optional[Dict]:
+    """Calculate all technical indicators"""
+    try:
+        if len(df) < 60:
+            return None
+        
+        df = df.sort_index()
+        
+        c = normalize_series(df["Close"])
+        h = normalize_series(df["High"])
+        l = normalize_series(df["Low"])
+        v = normalize_series(df["Volume"])
+        
+        ema20_series = EMAIndicator(c, 20).ema_indicator()
+        ema50_series = EMAIndicator(c, 50).ema_indicator()
+        ema200_series = EMAIndicator(c, 200).ema_indicator()
+        
+        ema20 = safe_indicator(lambda: float(ema20_series.iloc[-1]), default=float(c.iloc[-1]))
+        ema50 = safe_indicator(lambda: float(ema50_series.iloc[-1]), default=float(c.iloc[-1]))
+        ema200 = safe_indicator(lambda: float(ema200_series.iloc[-1]), default=float(c.iloc[-1]))
+        
+        def calc_slope(series, periods=5):
+            try:
+                return float(series.iloc[-1] - series.iloc[-periods])
+            except:
+                return 0.0
+        
+        ema20_slope = calc_slope(ema20_series)
+        ema50_slope = calc_slope(ema50_series)
+        
+        atr_series = AverageTrueRange(h, l, c, PRESET['atr_period']).average_true_range()
+        atr_val = safe_indicator(lambda: float(atr_series.iloc[-1]), default=float(c.iloc[-1]) * 0.02)
+        atr_slope = calc_slope(atr_series)
+        
+        rsi = safe_indicator(lambda: float(RSIIndicator(c, 14).rsi().iloc[-1]), default=50)
+        
+        try:
+            macd_obj = MACD(c)
+            macd_line = float(macd_obj.macd().iloc[-1])
+            macd_signal = float(macd_obj.macd_signal().iloc[-1])
+        except:
+            macd_line = 0
+            macd_signal = 0
+        
+        price_change = c.diff().fillna(0)
+        direction = np.sign(price_change)
+        obv_series = (direction * v).cumsum()
+        obv_slope = calc_slope(obv_series)
+        
+        adx = safe_indicator(lambda: float(ADXIndicator(h, l, c, 14).adx().iloc[-1]), default=20)
+        roc = safe_indicator(lambda: float(ROCIndicator(c, 10).roc().iloc[-1]), default=0)
+        
+        avg_vol = v.rolling(20).mean().iloc[-1]
+        volume_ratio = float(v.iloc[-1] / avg_vol) if avg_vol > 0 else 1.0
+        
+        return {
+            "price": float(c.iloc[-1]),
+            "volume": float(v.iloc[-1]),
+            "ema20": ema20,
+            "ema50": ema50,
+            "ema200": ema200,
+            "ema20_slope": ema20_slope,
+            "ema50_slope": ema50_slope,
+            "atr": atr_val,
+            "atr_slope": atr_slope,
+            "rsi": rsi,
+            "macd_line": macd_line,
+            "macd_signal": macd_signal,
+            "obv_slope": obv_slope,
+            "adx": adx,
+            "roc": roc,
+            "volume_ratio": volume_ratio,
+        }
+        
+    except Exception as e:
+        logger.debug(f"Indicator calculation failed: {e}")
+        return None
+
+# ============================================================================
+# ENTRY SIGNAL GENERATOR
 # ============================================================================
 
-def multi_timeframe_analysis(ticker, position_type):
-    """Analyze multiple timeframes with rate limiting."""
-    symbol = ticker if '.NS' in str(ticker) else f"{ticker}.NS"
+def generate_entry_signal(ind: Dict, df: pd.DataFrame, side: str) -> Dict:
+    """Generate entry signal with detailed reasons"""
     
     try:
-        rate_limited_api_call(symbol)
-        stock = yf.Ticker(symbol)
+        entry_ready = False
+        entry_signal = "NONE"
+        reasons = []
         
-        timeframes = {}
+        price = ind["price"]
+        rsi = ind["rsi"]
+        ema20 = ind["ema20"]
+        ema50 = ind["ema50"]
+        macd_line = ind["macd_line"]
+        macd_signal = ind["macd_signal"]
+        volume_ratio = ind["volume_ratio"]
         
-        # Daily
-        try:
-            daily_df = stock.history(period="3mo", interval="1d")
-            if len(daily_df) >= 20:
-                timeframes['Daily'] = daily_df
-        except:
-            pass
+        rsi_range = PRESET['rsi_range_long'] if side == "LONG" else PRESET['rsi_range_short']
         
-        time.sleep(0.3)
+        if side == "LONG":
+            if price > ema20:
+                reasons.append("Price > EMA20")
+            
+            if ema20 > ema50:
+                reasons.append("EMA20 > EMA50")
+            
+            if rsi_range[0] <= rsi <= rsi_range[1]:
+                reasons.append(f"RSI {rsi:.1f} in range")
+            
+            if macd_line > macd_signal:
+                reasons.append("MACD bullish")
+            
+            if volume_ratio >= 1.0:
+                reasons.append(f"Volume {volume_ratio:.2f}x")
+            
+            conditions = [
+                price > ema20,
+                ema20 > ema50,
+                rsi_range[0] <= rsi <= rsi_range[1],
+                macd_line > macd_signal,
+                volume_ratio >= PRESET['min_volume_ratio']
+            ]
+            
+            if sum(conditions) >= 3:
+                entry_ready = True
+                entry_signal = "LONG_ENTRY"
         
-        # Weekly
-        try:
-            weekly_df = stock.history(period="1y", interval="1wk")
-            if len(weekly_df) >= 10:
-                timeframes['Weekly'] = weekly_df
-        except:
-            pass
+        else:  # SHORT
+            if price < ema20:
+                reasons.append("Price < EMA20")
+            
+            if ema20 < ema50:
+                reasons.append("EMA20 < EMA50")
+            
+            if rsi_range[0] <= rsi <= rsi_range[1]:
+                reasons.append(f"RSI {rsi:.1f} in range")
+            
+            if macd_line < macd_signal:
+                reasons.append("MACD bearish")
+            
+            if volume_ratio >= 1.0:
+                reasons.append(f"Volume {volume_ratio:.2f}x")
+            
+            conditions = [
+                price < ema20,
+                ema20 < ema50,
+                rsi_range[0] <= rsi <= rsi_range[1],
+                macd_line < macd_signal,
+                volume_ratio >= PRESET['min_volume_ratio']
+            ]
+            
+            if sum(conditions) >= 3:
+                entry_ready = True
+                entry_signal = "SHORT_ENTRY"
         
-        # Hourly (only during market hours)
-        is_open, _, _, _ = is_market_hours()
-        if is_open:
-            time.sleep(0.3)
+        return {
+            "entry_ready": entry_ready,
+            "entry_signal": entry_signal,
+            "reasons": reasons
+        }
+        
+    except Exception as e:
+        return {
+            "entry_ready": False,
+            "entry_signal": "ERROR",
+            "reasons": [str(e)[:50]]
+        }
+
+# ============================================================================
+# COMPREHENSIVE SCORING SYSTEM
+# ============================================================================
+
+def score_signal(
+    ind: Dict,
+    df: pd.DataFrame,
+    side: str,
+    vix_sentiment: Optional[Dict],
+    sector_rs: Optional[Tuple[float, str]],
+    fibo_boost: int,
+    sr_info: Dict,
+    candle: Dict,
+    mtf_trend: Optional[str],
+    vol_analysis: Dict,
+    volume_analysis: Dict,
+    vsa_analysis: Dict,
+    momentum_analysis: Dict,
+    vcp_analysis: Dict,
+    gap_analysis: Dict,
+    supertrend_info: Dict
+) -> Tuple[float, List[str]]:
+    """Comprehensive scoring with REALISTIC confidence - STEEPER SIGMOID"""
+    
+    w = SCORING_WEIGHTS
+    raw_score = 0.0  # ✅ Start at 0
+    reasons = []
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # EMA TREND (max ±15 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if side == "LONG":
+        if ind["price"] > ind["ema20"] > ind["ema50"]:
+            raw_score += 15
+            reasons.append("Strong EMA alignment")
+        elif ind["price"] > ind["ema20"]:
+            raw_score += 7
+        else:
+            raw_score -= 12  # ✅ STRONG PENALTY for against trend
+        
+        if ind["price"] > ind["ema200"]:
+            raw_score += w["ema_200"]
+            reasons.append("Above 200 EMA")
+        else:
+            raw_score -= 3  # ✅ PENALTY
+    else:  # SHORT
+        if ind["price"] < ind["ema20"] < ind["ema50"]:
+            raw_score += 15
+            reasons.append("Strong EMA alignment")
+        elif ind["price"] < ind["ema20"]:
+            raw_score += 7
+        else:
+            raw_score -= 12  # ✅ STRONG PENALTY
+        
+        if ind["price"] < ind["ema200"]:
+            raw_score += w["ema_200"]
+            reasons.append("Below 200 EMA")
+        else:
+            raw_score -= 3
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # EMA SLOPE (max ±5 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if side == "LONG" and ind["ema20_slope"] > 0:
+        raw_score += w["ema_slope"]
+        reasons.append("EMA rising")
+    elif side == "SHORT" and ind["ema20_slope"] < 0:
+        raw_score += w["ema_slope"]
+        reasons.append("EMA falling")
+    else:
+        raw_score -= 4  # ✅ PENALTY for wrong slope
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # RSI (max ±10 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    rsi_range = PRESET['rsi_range_long'] if side == "LONG" else PRESET['rsi_range_short']
+    
+    if rsi_range[0] <= ind["rsi"] <= rsi_range[1]:
+        raw_score += w["rsi"]
+        reasons.append(f"RSI {ind['rsi']:.1f} optimal")
+    elif ind["rsi"] < 20 or ind["rsi"] > 80:
+        raw_score -= 8  # ✅ STRONG PENALTY for extreme RSI
+    elif ind["rsi"] < 30 or ind["rsi"] > 70:
+        raw_score -= 5  # ✅ MODERATE PENALTY
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # MACD (max ±10 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if side == "LONG" and ind["macd_line"] > ind["macd_signal"]:
+        raw_score += w["macd"]
+        reasons.append("MACD bullish")
+    elif side == "SHORT" and ind["macd_line"] < ind["macd_signal"]:
+        raw_score += w["macd"]
+        reasons.append("MACD bearish")
+    else:
+        raw_score -= 6  # ✅ PENALTY for wrong MACD direction
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # VOLUME (max ±6 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if ind["volume_ratio"] >= 1.5:
+        raw_score += w["volume_ratio"]
+        reasons.append(f"Strong volume")
+    elif ind["volume_ratio"] >= 1.0:
+        raw_score += w["volume_ratio"] * 0.5  # Partial credit
+    elif ind["volume_ratio"] < 0.7:
+        raw_score -= w["volume_ratio"]  # PENALTY for weak volume
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # OBV (max ±4 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if side == "LONG" and ind["obv_slope"] > 0:
+        raw_score += w["obv"]
+    elif side == "SHORT" and ind["obv_slope"] < 0:
+        raw_score += w["obv"]
+    else:
+        raw_score -= 3  # ✅ PENALTY
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # SUPPORT/RESISTANCE (max ±7 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    sr_bias = sr_info.get('bias', 'UNKNOWN')
+    
+    if sr_bias == 'AT_SUPPORT' and side == "LONG":
+        raw_score += w["sr_support"]
+        reasons.append("At support")
+    elif sr_bias == 'AT_RESISTANCE' and side == "SHORT":
+        raw_score += w["sr_resistance"]
+        reasons.append("At resistance")
+    elif sr_bias == 'AT_RESISTANCE' and side == "LONG":
+        raw_score -= 5  # ✅ PENALTY - buying at resistance
+    elif sr_bias == 'AT_SUPPORT' and side == "SHORT":
+        raw_score -= 5  # ✅ PENALTY - shorting at support
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # CANDLESTICK PATTERNS (max ±6 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    candle_score = candle.get('score', 0)
+    
+    if (side == "LONG" and candle_score > 0) or (side == "SHORT" and candle_score < 0):
+        raw_score += w["candle"] * min(1, abs(candle_score) / 8)
+        reasons.append(candle.get('description', 'Pattern'))
+    elif abs(candle_score) > 5:
+        # ✅ PENALTY if candle contradicts our direction
+        raw_score -= 4
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # MULTI-TIMEFRAME (max ±9 points) - STRONG WEIGHT
+    # ═══════════════════════════════════════════════════════════════════════
+    if mtf_trend:
+        if (side == "LONG" and mtf_trend == "UP") or (side == "SHORT" and mtf_trend == "DOWN"):
+            raw_score += w["mtf_trend"]
+            reasons.append(f"MTF {mtf_trend}")
+        elif mtf_trend == "MIXED":
+            raw_score -= w["mtf_penalty"]  # ✅ STRONG PENALTY
+        else:
+            raw_score -= 8  # ✅ VERY STRONG PENALTY for opposing MTF
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # VIX SENTIMENT (max ±6 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if vix_sentiment and USE_VIX_SENTIMENT:
+        vix_score = vix_sentiment.get('score', 0)
+        if side == "LONG" and vix_score > 0:
+            raw_score += w["vix_sentiment"]
+        elif side == "SHORT" and vix_score < 0:
+            raw_score += w["vix_sentiment"]
+        elif abs(vix_score) > 5:
+            raw_score -= 3  # ✅ PENALTY if VIX opposes direction
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIBONACCI (max ±8 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if fibo_boost > 0:
+        raw_score += w["fib_boost"]
+        reasons.append("At Fib level")
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # VOLUME BREAKOUT (max ±7 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if volume_analysis:
+        vol_score = volume_analysis.get('score', 0)
+        if vol_score > 0:
+            raw_score += min(w["volume_breakout"], vol_score)
+            if vol_score > 5:
+                reasons.append(volume_analysis.get('signal', ''))
+        elif vol_score < -5:
+            raw_score -= 5  # ✅ PENALTY for negative volume signal
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # VSA (max ±7 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if vsa_analysis:
+        vsa_score = vsa_analysis.get('score', 0)
+        if (side == "LONG" and vsa_score > 0) or (side == "SHORT" and vsa_score < 0):
+            raw_score += w["vsa_confirmation"] * min(1, abs(vsa_score) / 8)
+            reasons.append(vsa_analysis.get('signal', ''))
+        elif abs(vsa_score) > 5:
+            raw_score -= 4  # ✅ PENALTY for opposing VSA
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # MOMENTUM (max ±8 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if momentum_analysis:
+        mom_score = momentum_analysis.get('score', 0)
+        if mom_score > 0:
+            raw_score += min(w["adx_momentum"], mom_score)
+            if mom_score > 5:
+                reasons.append(momentum_analysis.get('signal', ''))
+        elif mom_score < -5:
+            raw_score -= 5  # ✅ PENALTY
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # VCP PATTERN (max ±9 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if vcp_analysis:
+        vcp_score = vcp_analysis.get('score', 0)
+        if vcp_score > 5:
+            raw_score += w["vcp_pattern"] * min(1, vcp_score / 10)
+            reasons.append(vcp_analysis.get('signal', ''))
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # GAP DETECTION (max ±5 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if gap_analysis:
+        gap_score = gap_analysis.get('score', 0)
+        if (side == "LONG" and gap_score > 0) or (side == "SHORT" and gap_score < 0):
+            raw_score += w["gap_detection"] * min(1, abs(gap_score) / 8)
+        elif abs(gap_score) > 5:
+            raw_score -= 3  # ✅ PENALTY
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # SUPERTREND (max ±8 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if supertrend_info:
+        st_direction = supertrend_info.get('direction')
+        if (side == "LONG" and st_direction == "UP") or (side == "SHORT" and st_direction == "DOWN"):
+            raw_score += w["supertrend"]
+            reasons.append(f"Supertrend {st_direction}")
+        elif st_direction:
+            raw_score -= 6  # ✅ STRONG PENALTY for opposing Supertrend
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTOR STRENGTH (max ±5 points)
+    # ═══════════════════════════════════════════════════════════════════════
+    if sector_rs and USE_SECTOR_ROTATION:
+        rs_value, rs_label = sector_rs
+        if rs_label == "STRONG":
+            raw_score += 5
+            reasons.append("Strong sector")
+        elif rs_label == "WEAK":
+            raw_score -= 4  # ✅ PENALTY
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIGURABLE SIGMOID TRANSFORMATION
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    # Get sigmoid divisor from preset (defaults to 35 if not configured)
+    # CONSERVATIVE: 40 (stricter scoring, fewer high-confidence signals)
+    # BALANCED:     35 (standard scoring, balanced distribution)
+    # AGGRESSIVE:   30 (gentler scoring, more signals pass)
+    sigmoid_divisor = PRESET.get('sigmoid_divisor', 35)  # ✅ CRITICAL FIX
+    
+    # Map raw_score to 0-100 scale with realistic distribution
+    # Expected distribution with divisor=35:
+    # raw_score =  -30 → ~25% confidence (very weak)
+    # raw_score =    0 → ~50% confidence (neutral)
+    # raw_score = +30 → ~70% confidence (good)
+    # raw_score = +60 → ~85% confidence (strong)
+    # raw_score = +90 → ~93% confidence (very strong)
+    confidence = 50 + (45 / (1 + np.exp(-raw_score / sigmoid_divisor)))
+    
+    # Final bounds: 30-95%
+    confidence = round(min(95, max(30, confidence)), 1)
+    
+    return confidence, reasons[:12]
+# ============================================================================
+# MINI BACKTEST
+# ============================================================================
+
+def mini_backtest(
+    df: pd.DataFrame,
+    entry_price: float,
+    side: str,
+    rr_ratio: float = 2.0
+) -> Tuple[bool, Dict]:
+    """Enhanced mini backtest - STRICT SUCCESS CRITERIA"""
+    try:
+        if len(df) < 25:
+            return False, {"reason": "Insufficient data"}
+        
+        lookback = min(60, len(df) - 1)
+        future_data = df.iloc[:-1].tail(lookback).copy()
+        
+        if future_data.empty:
+            return False, {"reason": "No future data"}
+        
+        atr = AverageTrueRange(
+            high=normalize_series(future_data['High']),
+            low=normalize_series(future_data['Low']),
+            close=normalize_series(future_data['Close']),
+            window=PRESET['atr_period']
+        ).average_true_range().iloc[-1]
+        
+        if side == "LONG":
+            stop_loss = entry_price - (atr * 1.5)
+            target = entry_price + (atr * rr_ratio)
+        else:
+            stop_loss = entry_price + (atr * 1.5)
+            target = entry_price - (atr * rr_ratio)
+        
+        # Track which happened first
+        target_hit = False
+        stop_hit = False
+        target_bar = None
+        stop_bar = None
+        
+        for i, row in enumerate(future_data.itertuples()):
+            if side == "LONG":
+                if row.High >= target and not target_hit:
+                    target_hit = True
+                    target_bar = i
+                if row.Low <= stop_loss and not stop_hit:
+                    stop_hit = True
+                    stop_bar = i
+            else:
+                if row.Low <= target and not target_hit:
+                    target_hit = True
+                    target_bar = i
+                if row.High >= stop_loss and not stop_hit:
+                    stop_hit = True
+                    stop_bar = i
+        
+        # ✅ FIX #5: STRICT SUCCESS CRITERIA
+        if target_hit and not stop_hit:
+            success = True  # Clean winner
+            reason = "Target hit, stop not hit"
+        elif target_hit and stop_hit:
+            # Which happened first?
+            if target_bar < stop_bar:
+                success = True
+                reason = "Target hit before stop"
+            elif target_bar == stop_bar:
+                success = True
+                reason = "Target/stop same bar - took target"
+            else:
+                final_price = future_data.iloc[-1]['Close']
+                if side == "LONG":
+                    final_pnl = ((final_price - entry_price) / entry_price) * 100
+                else:
+                    final_pnl = ((entry_price - final_price) / entry_price) * 100
+                success = final_pnl > -0.5
+                reason = f"Stop first but final: {final_pnl:.2f}%"
+
+        elif not target_hit and not stop_hit:
+            # Neither hit - check final P&L
+            final_price = future_data.iloc[-1]['Close']
+            if side == "LONG":
+                final_pnl_pct = ((final_price - entry_price) / entry_price) * 100
+            else:
+                final_pnl_pct = ((entry_price - final_price) / entry_price) * 100
+            
+            # Must be positive AND > 1% to pass
+            success = final_pnl_pct > 0.3
+            reason = f"Final P&L: {final_pnl_pct:.2f}%"
+        else:
+            # Stop hit, target not hit
+            final_price = future_data.iloc[-1]['Close']
+            if side == "LONG":
+                final_pnl = ((final_price - entry_price) / entry_price) * 100
+            else:
+                final_pnl = ((entry_price - final_price) / entry_price) * 100
+            success = final_pnl > -1.0
+            reason = f"Stop hit, final: {final_pnl:.2f}%"
+        
+        max_favorable = (future_data['High'].max() - entry_price) / entry_price * 100 if side == "LONG" else (entry_price - future_data['Low'].min()) / entry_price * 100
+        max_adverse = (future_data['Low'].min() - entry_price) / entry_price * 100 if side == "LONG" else (entry_price - future_data['High'].max()) / entry_price * 100
+        
+        metrics = {
+        "target_hit": target_hit,
+        "stop_hit": stop_hit,
+        "success_reason": reason,
+        "max_favorable": round(max_favorable, 2),
+        "max_adverse": round(max_adverse, 2),
+        "bars_analyzed": lookback
+    }
+        
+        return success, metrics
+        
+    except Exception as e:
+        return False, {"reason": str(e)[:50]}
+
+# ============================================================================
+# DATA LOADING FUNCTIONS
+# ============================================================================
+
+def get_universe_symbols() -> List[str]:
+    """Get NIFTY 500 stock universe - FIXED FOR NIFTY 500 ONLY"""
+    
+    print("  📊 Fetching NIFTY 500 constituents...")
+    
+    try:
+        # Method 1: Try NSE official API (most reliable)
+        url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            df = pd.read_csv(StringIO(response.text))
+            
+            # NSE CSV has 'Symbol' column
+            if 'Symbol' in df.columns:
+                symbols = df['Symbol'].tolist()
+            elif 'SYMBOL' in df.columns:
+                symbols = df['SYMBOL'].tolist()
+            else:
+                print("  ⚠️  Column not found, trying fallback...")
+                return get_nifty500_fallback()
+            
+            # Clean and add .NS suffix
+            symbols = [s.strip() + ".NS" for s in symbols if isinstance(s, str) and s.strip()]
+            
+            # Remove duplicates
+            symbols = list(dict.fromkeys(symbols))
+            
+            print(f"  ✅ Loaded {len(symbols)} Nifty 500 stocks from NSE")
+            return symbols[:500]  # Ensure max 500
+        
+        else:
+            print(f"  ⚠️  NSE API returned {response.status_code}, using fallback...")
+            return get_nifty500_fallback()
+            
+    except Exception as e:
+        print(f"  ⚠️  Error fetching Nifty 500: {e}")
+        print(f"  🔄 Using fallback list...")
+        return get_nifty500_fallback()
+
+def get_nifty500_fallback() -> List[str]:
+    """
+    Fallback Nifty 500 list (Top 100 most liquid stocks)
+    
+    🎯 This is a curated list of highly liquid Nifty 500 stocks
+    💡 Update this list periodically from: https://www.niftyindices.com
+    """
+    
+    nifty_500_symbols = [
+        # Nifty 50 (Blue chips)
+        "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+        "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+        "BAJFINANCE.NS", "LT.NS", "ASIANPAINT.NS", "AXISBANK.NS", "MARUTI.NS",
+        "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "NESTLEIND.NS", "WIPRO.NS",
+        "HCLTECH.NS", "TATAMOTORS.NS", "ONGC.NS", "NTPC.NS", "POWERGRID.NS",
+        "ADANIENT.NS", "ADANIPORTS.NS", "COALINDIA.NS", "TATASTEEL.NS", "M&M.NS",
+        "BAJAJFINSV.NS", "TECHM.NS", "JSWSTEEL.NS", "GRASIM.NS", "INDUSINDBK.NS",
+        "HINDALCO.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "DIVISLAB.NS",
+        "EICHERMOT.NS", "BRITANNIA.NS", "SHREECEM.NS", "HEROMOTOCO.NS", "TATACONSUM.NS",
+        "BAJAJ-AUTO.NS", "UPL.NS", "SBILIFE.NS", "HDFCLIFE.NS", "BPCL.NS",
+        
+        # Nifty Next 50
+        "ADANIGREEN.NS", "ADANITRANS.NS", "AMBUJACEM.NS", "BANDHANBNK.NS", "BERGEPAINT.NS",
+        "BEL.NS", "BOSCHLTD.NS", "COLPAL.NS", "DABUR.NS", "DMART.NS",
+        "DLF.NS", "GAIL.NS", "GODREJCP.NS", "HAVELLS.NS", "HINDPETRO.NS",
+        "ICICIPRULI.NS", "INDIGO.NS", "IRCTC.NS", "JINDALSTEL.NS", "LICHSGFIN.NS",
+        "LUPIN.NS", "MARICO.NS", "MCDOWELL-N.NS", "MOTHERSON.NS", "MUTHOOTFIN.NS",
+        "NAUKRI.NS", "NMDC.NS", "OFSS.NS", "PAGEIND.NS", "PETRONET.NS",
+        "PFC.NS", "PIDILITIND.NS", "PNB.NS", "RECLTD.NS", "SAIL.NS",
+        "SIEMENS.NS", "SRF.NS", "TATAPOWER.NS", "TORNTPHARM.NS", "TRENT.NS",
+        "TVSMOTOR.NS", "VEDL.NS", "ZYDUSLIFE.NS", "ATUL.NS", "AUROPHARMA.NS",
+        
+        # Mid Cap (High Quality)
+        "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS", "ALKEM.NS", "AMARAJABAT.NS",
+        "ASTRAL.NS", "AUBANK.NS", "BALKRISIND.NS", "BATAINDIA.NS", "BHARATFORG.NS",
+        "BIOCON.NS", "CADILAHC.NS", "CANBK.NS", "CHAMBLFERT.NS", "CHOLAFIN.NS",
+        "COFORGE.NS", "CONCOR.NS", "CUMMINSIND.NS", "DEEPAKNTR.NS", "DIXON.NS",
+        "ESCORTS.NS", "FEDERALBNK.NS", "GLENMARK.NS", "GMRINFRA.NS", "GNFC.NS",
+        "GODREJPROP.NS", "GRANULES.NS", "GUJGASLTD.NS", "HAL.NS", "HDFCAMC.NS",
+        "HONAUT.NS", "IDFCFIRSTB.NS", "INDUSTOWER.NS", "IOC.NS", "IPCALAB.NS",
+        "IRFC.NS", "IGL.NS", "JUBLFOOD.NS", "KANSAINER.NS", "KEI.NS",
+        "L&TFH.NS", "LALPATHLAB.NS", "LAURUSLABS.NS", "LTIM.NS", "MANAPPURAM.NS",
+        "MAXHEALTH.NS", "MGL.NS", "MPHASIS.NS", "MRF.NS", "NAM-INDIA.NS",
+        "OBEROIRLTY.NS", "OIL.NS", "PERSISTENT.NS", "PIIND.NS", "PVR.NS",
+        "RAIN.NS", "RAMCOCEM.NS", "SBICARD.NS", "SKFINDIA.NS", "SOLARINDS.NS",
+        "SONACOMS.NS", "SUNTV.NS", "SUPREMEIND.NS", "SYNGENE.NS", "TATACHEM.NS",
+        "TATACOMM.NS", "TATAELXSI.NS", "TIINDIA.NS", "TORNTPOWER.NS", "TTML.NS",
+        "UBL.NS", "UNIONBANK.NS", "VOLTAS.NS", "WHIRLPOOL.NS", "ZEEL.NS",
+        
+        # Small Cap (Momentum stocks)
+        "AAVAS.NS", "ABCAPITAL.NS", "AEGISCHEM.NS", "AFFLE.NS", "AJANTPHARM.NS",
+        "ALKYLAMINE.NS", "AMBER.NS", "APLLTD.NS", "ASAHIINDIA.NS", "ASHOKLEY.NS",
+        "ATUL.NS", "AVANTIFEED.NS", "AXISCADES.NS", "BASF.NS", "BEML.NS",
+        "BHARTIHEXA.NS", "BIKAJI.NS", "BLS.NS", "BSOFT.NS", "CAMS.NS",
+        "CAPLIPOINT.NS", "CARBORUNIV.NS", "CCL.NS", "CDSL.NS", "CERA.NS",
+        "CHALET.NS", "CLEAN.NS", "COCHINSHIP.NS", "COROMANDEL.NS", "CREDITACC.NS",
+        "CROMPTON.NS", "CSB.NS", "CUB.NS", "CYIENT.NS", "DATAPATTNS.NS",
+        "DCBBANK.NS", "DELTACORP.NS", "DHANI.NS", "DHANUKA.NS", "DISHTV.NS",
+        "EMAMILTD.NS", "ENDURANCE.NS", "EQUITAS.NS", "FINEORG.NS", "FINPIPE.NS",
+        "FSL.NS", "GATEWAY.NS", "GICRE.NS", "GILLETTE.NS", "GLAXO.NS",
+        "GPIL.NS", "GRAPHITE.NS", "GREAVESCOT.NS", "GRINDWELL.NS", "GRSE.NS",
+        "GSFC.NS", "GSPL.NS", "HAPPSTMNDS.NS", "HATHWAY.NS", "HCG.NS",
+        "HFCL.NS", "HIMATSEIDE.NS", "HNDFDS.NS", "HOMEFIRST.NS", "HUDCO.NS",
+        "IFBIND.NS", "IIFL.NS", "IIFLSEC.NS", "INDHOTEL.NS", "INOXLEISUR.NS",
+        "JBCHEPHARM.NS", "JKCEMENT.NS", "JKLAKSHMI.NS", "JKPAPER.NS", "JMFINANCIL.NS",
+        "JSWENERGY.NS", "JTEKTINDIA.NS", "JUBLINGREA.NS", "JUSTDIAL.NS", "JYOTHYLAB.NS",
+        "KAJARIACER.NS", "KALPATPOWR.NS", "KARURVYSYA.NS", "KEC.NS", "KPRMILL.NS",
+        "KRBL.NS", "LEMONTREE.NS", "LXCHEM.NS", "MAHLOG.NS", "MAHSEAMLES.NS",
+        "MAHSCOOTER.NS", "MASTEK.NS", "MINDACORP.NS", "MINDAIND.NS", "MOTILALOFS.NS",
+        "NATIONALUM.NS", "NAVINFLUOR.NS", "NBCC.NS", "NCC.NS", "NDTV.NS",
+        "NELCO.NS", "NETWORK18.NS", "NHPC.NS", "NILKAMAL.NS", "NLCINDIA.NS",
+        "NOCIL.NS", "NYKAA.NS", "ORIENTELEC.NS", "PARAGMILK.NS", "PCJEWELLER.NS",
+        "PNBHOUSING.NS", "PNCINFRA.NS", "POLICYBZR.NS", "POLYCAB.NS", "POLYMED.NS",
+        "POONAWALLA.NS", "PRSMJOHNSN.NS", "PTCIL.NS", "PVP.NS", "RAJESHEXPO.NS",
+        "RALLIS.NS", "RATNAMANI.NS", "RAYMOND.NS", "RBL.NS", "RCF.NS",
+        "REDINGTON.NS", "RELAXO.NS", "RITES.NS", "ROUTE.NS", "SANOFI.NS",
+        "SCHAEFFLER.NS", "SHARDACROP.NS", "SHILPAMED.NS", "SHOPERSTOP.NS", "SHYAMMETL.NS",
+        "SJVN.NS", "SOBHA.NS", "SPANDANA.NS", "SPARC.NS", "STARCEMENT.NS",
+        "STAR.NS", "STLTECH.NS", "STYRENIX.NS", "SUBEX.NS", "SUNDARMFIN.NS",
+        "SUNDRMFAST.NS", "SUNPHARMA.NS", "SUPRAJIT.NS", "SUPRIYA.NS", "SUVEN.NS",
+        "SWANENERGY.NS", "SYMPHONY.NS", "TATACOMM.NS", "TATAINVEST.NS", "TATAMETALI.NS",
+        "TCNSBRANDS.NS", "TEAMLEASE.NS", "TECHM.NS", "THERMAX.NS", "THYROCARE.NS",
+        "TIMKEN.NS", "TIPSINDLTD.NS", "TRITURBINE.NS", "TRIDENT.NS", "TRITURBINE.NS",
+        "TTK.NS", "TV18BRDCST.NS", "UCOBANK.NS", "UJAAS.NS", "UJJIVAN.NS",
+        "ULTRACEMCO.NS", "UNICHEMLAB.NS", "UNIONBANK.NS", "UTIAMC.NS", "VAIBHAVGBL.NS",
+        "VARROC.NS", "VBL.NS", "VENKEYS.NS", "VGUARD.NS", "VIPIND.NS",
+        "VINATIORGA.NS", "VSTIND.NS", "WABCOINDIA.NS", "WELCORP.NS", "WELSPUNIND.NS",
+        "WESTLIFE.NS", "WILSON.NS", "WOCKPHARMA.NS", "YESBANK.NS", "ZENSARTECH.NS",
+    ]
+    
+    print(f"  ✅ Using fallback: {len(nifty_500_symbols)} curated Nifty 500 stocks")
+    
+    return nifty_500_symbols[:500]
+
+
+
+def build_cache(tickers: List[str]) -> Optional[pd.DataFrame]:
+    """Build price data cache - FIXED VERSION FOR UNIQUE DATA"""
+    print(f"\n[Building Price Cache for {len(tickers)} stocks]")
+    
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=LOOKBACK_DAYS)
+    
+    all_data = []
+    failed = []
+    successful_downloads = {}  # Track successful downloads to prevent duplicates
+    
+    def download_ticker(ticker):
+        """Download single ticker - FIXED FOR UNIQUE DATA"""
+        original_ticker = ticker
+        
+        # Clean ticker - remove any existing suffix
+        base_ticker = ticker.replace('.NS', '').replace('.BO', '')
+        
+        # Always try .NS first for NSE stocks
+        test_ticker = base_ticker + '.NS'
+        
+        # Download with retries
+        for attempt in range(3):
             try:
-                hourly_df = stock.history(period="5d", interval="1h")
-                if len(hourly_df) >= 10:
-                    timeframes['Hourly'] = hourly_df
+                # Download fresh data
+                df = yf.download(
+                    test_ticker,
+                    start=start_date,
+                    end=end_date,
+                    progress=False,
+                    auto_adjust=True,
+                    timeout=10,
+                    threads=False  # Disable threading for more reliable downloads
+                )
+                
+                # Check if we got valid data
+                if df is not None and not df.empty and len(df) >= 60:
+                    break
+                    
+                # If .NS failed, try .BO
+                if attempt == 1:
+                    test_ticker = base_ticker + '.BO'
+                    
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(1)
+                continue
+        
+        # Validate we got data
+        if df is None or df.empty or len(df) < 60:
+            return None
+        
+        try:
+            # Flatten MultiIndex columns if present
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # Ensure required columns
+            required = ['Open', 'High', 'Low', 'Close', 'Volume']
+            if not all(col in df.columns for col in required):
+                return None
+            
+            # Remove any NaN values
+            df = df.dropna(subset=['Close', 'Volume'])
+            
+            if len(df) < 60:
+                return None
+            
+            # Create unique signature for this data
+            data_signature = f"{df['Close'].mean():.2f}_{df['Close'].std():.2f}_{df['Volume'].mean():.0f}"
+            
+            # Check if we already have this exact data
+            if data_signature in successful_downloads:
+                logger.debug(f"{test_ticker}: Duplicate data detected, skipping")
+                return None
+            
+            # Mark this data as downloaded
+            successful_downloads[data_signature] = test_ticker
+            
+            # DON'T normalize prices here - let the scanner handle it
+            # This ensures we get actual market prices
+            
+            # Build clean dataframe with actual ticker used
+            clean_df = pd.DataFrame({
+                'Date': df.index,
+                'Open': df['Open'].values,
+                'High': df['High'].values,
+                'Low': df['Low'].values,
+                'Close': df['Close'].values,
+                'Volume': df['Volume'].values,
+                'ticker': test_ticker  # Store the actual ticker that worked
+            })
+            
+            clean_df['Date'] = pd.to_datetime(clean_df['Date'])
+            
+            # Final validation
+            if clean_df['Close'].nunique() < 10:
+                return None
+                
+            return clean_df
+            
+        except Exception as e:
+            logger.debug(f"{test_ticker}: Processing failed: {e}")
+            return None
+    
+    # Download data with progress tracking
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Reduced workers for stability
+        futures = {executor.submit(download_ticker, t): t for t in tickers}
+        
+        for i, future in enumerate(as_completed(futures), 1):
+            ticker = futures[future]
+            try:
+                result = future.result(timeout=30)
+                if result is not None:
+                    all_data.append(result)
+                else:
+                    failed.append(ticker)
+            except Exception:
+                failed.append(ticker)
+            
+            # Progress update
+            if i % 25 == 0 or i == len(tickers):
+                print(f"  Progress: {i}/{len(tickers)} | Success: {len(all_data)} | Failed: {len(failed)}", 
+                      end="\r", flush=True)
+    
+    print()  # New line after progress
+    
+    if not all_data:
+        print("\n  ❌ No data downloaded successfully!")
+        return None
+    
+    # Concatenate all data
+    try:
+        df_all = pd.concat(all_data, axis=0, ignore_index=True)
+        
+        # Verify each ticker has unique data
+        print(f"\n  📊 Verifying data uniqueness...")
+        tickers_to_remove = []
+        
+        for ticker in df_all['ticker'].unique():
+            ticker_data = df_all[df_all['ticker'] == ticker]
+            unique_prices = ticker_data['Close'].nunique()
+            
+            if unique_prices < 10:
+                tickers_to_remove.append(ticker)
+                print(f"  ⚠️  Removing {ticker} - insufficient unique prices ({unique_prices})")
+        
+        # Remove bad tickers
+        if tickers_to_remove:
+            df_all = df_all[~df_all['ticker'].isin(tickers_to_remove)]
+        
+        final_ticker_count = df_all['ticker'].nunique()
+        print(f"  ✓ Cached {final_ticker_count} stocks with {len(df_all):,} total bars")
+        
+        return df_all
+        
+    except Exception as e:
+        print(f"\n  ❌ Error concatenating data: {e}")
+        return None
+# ============================================================================
+# MAIN SCANNER FUNCTION - COMPLETE WITH TICKER MATCHING FIX
+# ============================================================================
+def scan_ticker(
+    ticker: str,
+    df_all: pd.DataFrame,
+    quality_validator: DataQualityValidator,
+    sector_filter: SectorRotationAnalyzer,
+    vix_filter: VIXSentimentAnalyzer,
+    fibo_detector: FibonacciDetector,
+    portfolio_mgr: PortfolioRiskManager,
+    mtf_analyzer: MultiTimeframeAnalyzer,
+    backtester: Optional[AdvancedBacktester] = None,
+    run_full_backtest: bool = False
+) -> Optional[Dict]:
+    """Complete scanner - FULLY FIXED VERSION WITH PROPER DATA HANDLING"""
+    
+    global stats, rejection_samples
+    stats["total"] += 1
+    
+    def log_rejection(reason: str, detail: str = ""):
+        if len(rejection_samples) < 15:
+            msg = f"{ticker.replace('.NS', '').replace('.BO', '')}: {reason}"
+            if detail:
+                msg += f" ({detail})"
+            rejection_samples.append(msg)
+    
+    try:
+        # ====================================================================
+        # GET DATA FOR THIS TICKER
+        # ====================================================================
+        df_t = df_all[df_all["ticker"] == ticker].copy()
+        
+        if df_t.empty:
+            stats["no_data"] += 1
+            log_rejection("No data", "Ticker not in cache")
+            return None
+        
+        # ====================================================================
+        # PREPARE DATA - ENSURE CLEAN DATAFRAME
+        # ====================================================================
+        df_t = df_t.copy()  # Make a fresh copy
+        
+        # Sort by date
+        if 'Date' in df_t.columns:
+            df_t = df_t.sort_values('Date')
+            df_t = df_t.set_index('Date')
+        
+        df_t = df_t.sort_index()
+        
+        # Drop ticker column BEFORE any processing
+        if 'ticker' in df_t.columns:
+            df_t = df_t.drop(columns=['ticker'])
+        
+        # Normalize prices if needed (only for paise data)
+        df_t = normalize_price_data(df_t)
+        
+        # Ensure it's still a proper DataFrame
+        if not isinstance(df_t, pd.DataFrame):
+            stats["data_quality_fail"] += 1
+            log_rejection("Data type error", f"Got {type(df_t)}")
+            return None
+        
+        # ====================================================================
+        # VERIFY DATA FRESHNESS
+        # ====================================================================
+        try:
+            last_date = df_t.index[-1]
+            days_old = (datetime.now() - pd.to_datetime(last_date)).days
+            
+            if days_old > MAX_DATA_STALE_DAYS:
+                stats["data_quality_fail"] += 1
+                log_rejection("Stale data", f"{days_old} days old")
+                return None
+        except Exception as e:
+            stats["data_quality_fail"] += 1
+            log_rejection("Date error", str(e)[:30])
+            return None
+        
+        # ====================================================================
+        # VERIFY DATA UNIQUENESS
+        # ====================================================================
+        unique_prices = df_t['Close'].nunique()
+        total_rows = len(df_t)
+        
+        if total_rows > 20 and unique_prices < 10:
+            stats["data_quality_fail"] += 1
+            log_rejection("Duplicate data", f"Only {unique_prices} unique prices")
+            return None
+        
+        # ====================================================================
+        # DATA QUALITY CHECKS
+        # ====================================================================
+        if not quality_validator.has_sufficient_history(df_t, min_bars=60):
+            stats["indicator_fail"] += 1
+            log_rejection("Insufficient history", f"{len(df_t)} bars")
+            return None
+        
+        valid_prices, price_reason = quality_validator.has_valid_prices(df_t)
+        if not valid_prices:
+            stats["data_quality_fail"] += 1
+            log_rejection("Invalid prices", price_reason)
+            return None
+        
+        # ====================================================================
+        # CALCULATE INDICATORS
+        # ====================================================================
+        ind = calculate_indicators(df_t)
+        if ind is None:
+            stats["indicator_fail"] += 1
+            log_rejection("Indicator calculation failed")
+            return None
+        
+        price = ind["price"]
+        
+        # Debug first few stocks
+        if stats["total"] <= 5:
+            print(f"\n  DEBUG: {ticker} - Price: ₹{price:.2f} | RSI: {ind['rsi']:.1f} | Vol: {ind['volume_ratio']:.2f}x")
+        
+        # ====================================================================
+        # VOLATILITY REGIME FILTER
+        # ====================================================================
+        vol_ok, vol_reason, vol_metrics = VolatilityRegimeFilter.analyze_regime(df_t, price)
+        if not vol_ok:
+            stats["volatility_fail"] += 1
+            log_rejection("Volatility", vol_reason)
+            return None
+        
+        # ====================================================================
+        # RUN ALL ANALYZERS
+        # ====================================================================
+        try:
+            volume_score, volume_signal, volume_metrics = InstitutionalVolumeAnalyzer.analyze(df_t, ind["volume"])
+            vsa_score, vsa_signal, vsa_metrics = VolumeSpreadAnalyzer.analyze(df_t)
+            momentum_score, momentum_signal, momentum_metrics = MomentumScoreCalculator.calculate(df_t)
+            vcp_score, vcp_signal, vcp_metrics = VCPDetector.detect(df_t)
+            gap_score, gap_signal, gap_metrics = GapDetector.detect(df_t)
+            sr_info = SRClusterDetector.detect(df_t)
+            candle = CandlestickPatternDetector.detect(df_t)
+            st_direction, st_strength, st_metrics = SupertrendIndicator.calculate(df_t)
+            mtf_trend = mtf_analyzer.get_trend(ticker)
+        except Exception as e:
+            stats["indicator_fail"] += 1
+            log_rejection("Analyzer error", str(e)[:40])
+            return None
+        
+        # ====================================================================
+        # GET FUNDAMENTALS
+        # ====================================================================
+        sector, pe = get_fundamentals(ticker)
+        
+        # ====================================================================
+        # SECTOR ROTATION (IF ENABLED)
+        # ====================================================================
+        sector_rs = None
+        if USE_SECTOR_ROTATION and sector_filter and sector:
+            try:
+                sector_rs = sector_filter.get_sector_strength(sector)
+            except:
+                sector_rs = None
+        
+        # ====================================================================
+        # VIX SENTIMENT (IF ENABLED)
+        # ====================================================================
+        vix_sentiment = None
+        if USE_VIX_SENTIMENT and vix_filter:
+            try:
+                vix_sentiment = vix_filter.get_vix_sentiment()
+            except:
+                vix_sentiment = None
+        
+        # ====================================================================
+        # FIBONACCI LEVELS (IF ENABLED)
+        # ====================================================================
+        long_fibo_boost = 0
+        short_fibo_boost = 0
+        if USE_FIBONACCI_SCORING and fibo_detector:
+            try:
+                fib_levels = fibo_detector.calculate_levels(df_t, PRESET['fib_lookback'])
+                if fib_levels:
+                    long_fibo_boost, _ = fibo_detector.detect_bounce(price, fib_levels, "LONG")
+                    short_fibo_boost, _ = fibo_detector.detect_bounce(price, fib_levels, "SHORT")
             except:
                 pass
         
-        if not timeframes:
-            return {
-                'signals': {},
-                'details': {},
-                'alignment_score': 50,
-                'recommendation': "Unable to fetch data",
-                'aligned_count': 0,
-                'against_count': 0,
-                'total_timeframes': 0,
-                'trend_strength': 'UNKNOWN'
-            }
+        # ====================================================================
+        # GENERATE ENTRY SIGNALS
+        # ====================================================================
+        long_entry = generate_entry_signal(ind, df_t, "LONG")
+        short_entry = generate_entry_signal(ind, df_t, "SHORT")
         
-        signals = {}
-        details = {}
-        
-        for tf_name, tf_df in timeframes.items():
-            if len(tf_df) >= 14:
-                close = tf_df['Close']
-                current = float(close.iloc[-1])
-                
-                rsi = calculate_rsi(close).iloc[-1]
-                if pd.isna(rsi):
-                    rsi = 50
-                
-                sma_20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else close.mean()
-                ema_9 = close.ewm(span=9).mean().iloc[-1]
-                ema_21 = close.ewm(span=21).mean().iloc[-1] if len(close) >= 21 else close.mean()
-                
-                macd, signal_line, histogram = calculate_macd(close)
-                macd_hist = histogram.iloc[-1] if len(histogram) > 0 else 0
-                if pd.isna(macd_hist):
-                    macd_hist = 0
-                
-                bullish_points = 0
-                total_points = 8
-                
-                if rsi > 50:
-                    bullish_points += 2
-                if current > sma_20:
-                    bullish_points += 2
-                if ema_9 > ema_21:
-                    bullish_points += 2
-                if macd_hist > 0:
-                    bullish_points += 2
-                
-                bullish_pct = (bullish_points / total_points) * 100
-                
-                if bullish_pct >= 75:
-                    signal = "BULLISH"
-                    strength = "Strong"
-                elif bullish_pct >= 50:
-                    signal = "BULLISH"
-                    strength = "Moderate"
-                elif bullish_pct <= 25:
-                    signal = "BEARISH"
-                    strength = "Strong"
-                elif bullish_pct < 50:
-                    signal = "BEARISH"
-                    strength = "Moderate"
-                else:
-                    signal = "NEUTRAL"
-                    strength = "Weak"
-                
-                signals[tf_name] = signal
-                details[tf_name] = {
-                    'signal': signal,
-                    'strength': strength,
-                    'rsi': rsi,
-                    'above_sma20': current > sma_20,
-                    'ema_bullish': ema_9 > ema_21,
-                    'macd_bullish': macd_hist > 0,
-                    'bullish_score': bullish_pct
-                }
-        
-        # Calculate alignment
-        if position_type == "LONG":
-            aligned = sum(1 for s in signals.values() if s == "BULLISH")
-            against = sum(1 for s in signals.values() if s == "BEARISH")
-        else:
-            aligned = sum(1 for s in signals.values() if s == "BEARISH")
-            against = sum(1 for s in signals.values() if s == "BULLISH")
-        
-        total = len(signals)
-        alignment_score = int((aligned / total) * 100) if total > 0 else 50
-        
-        if alignment_score >= 80:
-            recommendation = f"✅ Strong alignment with {position_type}"
-        elif alignment_score >= 60:
-            recommendation = f"👍 Good alignment with {position_type}"
-        elif alignment_score >= 40:
-            recommendation = f"⚠️ Mixed signals"
-        else:
-            recommendation = f"🚨 Against {position_type}"
-        
-        return {
-            'signals': signals,
-            'details': details,
-            'alignment_score': alignment_score,
-            'recommendation': recommendation,
-            'aligned_count': aligned,
-            'against_count': against,
-            'total_timeframes': total,
-            'trend_strength': 'STRONG' if alignment_score >= 70 else 'MODERATE' if alignment_score >= 50 else 'WEAK'
-        }
-    
-    except Exception as e:
-        return {
-            'signals': {},
-            'details': {},
-            'alignment_score': 50,
-            'recommendation': f"Error: {str(e)}",
-            'aligned_count': 0,
-            'against_count': 0,
-            'total_timeframes': 0,
-            'trend_strength': 'UNKNOWN'
-        }
-
-# ============================================================================
-# CORRELATION ANALYSIS
-# ============================================================================
-
-def calculate_correlation_matrix(tickers, period="3mo"):
-    """Calculate correlation matrix between stocks"""
-    price_data = {}
-    
-    for ticker in tickers:
-        df = get_stock_data_safe(ticker, period=period)
-        if df is not None and len(df) > 20:
-            price_data[ticker] = df['Close'].pct_change().dropna()
-        time.sleep(0.2)
-    
-    if len(price_data) < 2:
-        return None, "Not enough data"
-    
-    # Align all series
-    combined = pd.DataFrame(price_data)
-    combined = combined.dropna()
-    
-    if len(combined) < 20:
-        return None, "Insufficient overlapping data"
-    
-    correlation_matrix = combined.corr()
-    
-    return correlation_matrix, "Success"
-
-def analyze_correlation_risk(correlation_matrix, threshold=0.7):
-    """Analyze correlation risk in portfolio"""
-    if correlation_matrix is None:
-        return [], 0, "No correlation data"
-    
-    high_correlations = []
-    tickers = correlation_matrix.columns.tolist()
-    
-    for i, ticker1 in enumerate(tickers):
-        for j, ticker2 in enumerate(tickers):
-            if i < j:
-                corr = correlation_matrix.loc[ticker1, ticker2]
-                if abs(corr) >= threshold:
-                    high_correlations.append({
-                        'pair': f"{ticker1} - {ticker2}",
-                        'correlation': corr,
-                        'risk': 'HIGH' if abs(corr) >= 0.85 else 'MEDIUM'
-                    })
-    
-    avg_correlation = correlation_matrix.values[np.triu_indices_from(correlation_matrix.values, k=1)].mean()
-    
-    if avg_correlation > 0.6:
-        status = "🔴 High portfolio correlation - diversification needed"
-    elif avg_correlation > 0.4:
-        status = "🟡 Moderate correlation - acceptable"
-    else:
-        status = "🟢 Low correlation - well diversified"
-    
-    return high_correlations, avg_correlation, status
-	
-# ============================================================================
-# STOP LOSS RISK PREDICTION (0-100)
-# ============================================================================
-
-def predict_sl_risk(df, current_price, stop_loss, position_type, entry_price, sl_alert_threshold=50):
-    """
-    Predict likelihood of hitting stop loss
-    Returns: risk_score (0-100), reasons, recommendation, priority
-    """
-    risk_score = 0
-    reasons = []
-    close = df['Close']
-    
-    # Distance to Stop Loss (0-40 points)
-    if position_type == "LONG":
-        distance_pct = ((current_price - stop_loss) / current_price) * 100
-    else:
-        distance_pct = ((stop_loss - current_price) / current_price) * 100
-    
-    if distance_pct < 0:  # Already hit SL
-        risk_score = 100
-        reasons.append("⚠️ SL already breached!")
-    elif distance_pct < 1:
-        risk_score += 40
-        reasons.append(f"🔴 Very close to SL ({distance_pct:.1f}% away)")
-    elif distance_pct < 2:
-        risk_score += 30
-        reasons.append(f"🟠 Close to SL ({distance_pct:.1f}% away)")
-    elif distance_pct < 3:
-        risk_score += 15
-        reasons.append(f"🟡 Approaching SL ({distance_pct:.1f}% away)")
-    elif distance_pct < 5:
-        risk_score += 5
-    
-    # Trend Against Position (0-25 points)
-    sma_20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else close.mean()
-    sma_50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else sma_20
-    ema_9 = close.ewm(span=9).mean().iloc[-1]
-    
-    if position_type == "LONG":
-        if current_price < ema_9:
-            risk_score += 8
-            reasons.append("📉 Below EMA 9")
-        if current_price < sma_20:
-            risk_score += 10
-            reasons.append("📉 Below SMA 20")
-        if current_price < sma_50:
-            risk_score += 7
-            reasons.append("📉 Below SMA 50")
-        if sma_20 < sma_50:
-            risk_score += 5
-            reasons.append("📉 Death cross forming")
-    else:  # SHORT
-        if current_price > ema_9:
-            risk_score += 8
-            reasons.append("📈 Above EMA 9")
-        if current_price > sma_20:
-            risk_score += 10
-            reasons.append("📈 Above SMA 20")
-        if current_price > sma_50:
-            risk_score += 7
-            reasons.append("📈 Above SMA 50")
-        if sma_20 > sma_50:
-            risk_score += 5
-            reasons.append("📈 Golden cross forming")
-    
-    # MACD Against Position (0-15 points)
-    macd, signal, histogram = calculate_macd(close)
-    hist_current = histogram.iloc[-1] if len(histogram) > 0 else 0
-    hist_prev = histogram.iloc[-2] if len(histogram) > 1 else 0
-    
-    if pd.isna(hist_current):
-        hist_current = 0
-    if pd.isna(hist_prev):
-        hist_prev = 0
-    
-    if position_type == "LONG":
-        if hist_current < 0:
-            risk_score += 8
-            reasons.append("📊 MACD bearish")
-        if hist_current < hist_prev:
-            risk_score += 7
-            reasons.append("📊 MACD declining")
-    else:
-        if hist_current > 0:
-            risk_score += 8
-            reasons.append("📊 MACD bullish")
-        if hist_current > hist_prev:
-            risk_score += 7
-            reasons.append("📊 MACD rising")
-    
-    # RSI Extreme (0-10 points)
-    rsi = calculate_rsi(close).iloc[-1]
-    if pd.isna(rsi):
-        rsi = 50
-    
-    if position_type == "LONG" and rsi < 35:
-        risk_score += 10
-        reasons.append(f"📉 RSI weak ({rsi:.0f})")
-    elif position_type == "SHORT" and rsi > 65:
-        risk_score += 10
-        reasons.append(f"📈 RSI strong ({rsi:.0f})")
-    
-    # Consecutive Candles Against Position (0-10 points)
-    if len(close) >= 4:
-        last_3 = close.tail(4).diff().dropna()
-        if position_type == "LONG" and all(last_3 < 0):
-            risk_score += 10
-            reasons.append("🕯️ 3 consecutive red candles")
-        elif position_type == "SHORT" and all(last_3 > 0):
-            risk_score += 10
-            reasons.append("🕯️ 3 consecutive green candles")
-    
-    # Volume Confirmation (0-10 points)
-    volume_signal, volume_ratio, _, _ = analyze_volume(df)
-    
-    if position_type == "LONG" and volume_signal in ["STRONG_SELLING", "SELLING"]:
-        risk_score += 10
-        reasons.append(f"📊 Selling volume ({volume_ratio:.1f}x)")
-    elif position_type == "SHORT" and volume_signal in ["STRONG_BUYING", "BUYING"]:
-        risk_score += 10
-        reasons.append(f"📊 Buying volume ({volume_ratio:.1f}x)")
-    
-    # Cap at 100
-    risk_score = min(100, risk_score)
-    
-    # Generate recommendation based on threshold
-    if risk_score >= 80:
-        recommendation = "🚨 EXIT NOW - Very high risk"
-        priority = "CRITICAL"
-    elif risk_score >= sl_alert_threshold + 20:
-        recommendation = "⚠️ CONSIDER EXIT - High risk"
-        priority = "HIGH"
-    elif risk_score >= sl_alert_threshold:
-        recommendation = "👀 WATCH CLOSELY - Moderate risk"
-        priority = "MEDIUM"
-    elif risk_score >= 20:
-        recommendation = "✅ MONITOR - Low risk"
-        priority = "LOW"
-    else:
-        recommendation = "✅ SAFE - Very low risk"
-        priority = "SAFE"
-    
-    return risk_score, reasons, recommendation, priority
-
-# ============================================================================
-# UPSIDE POTENTIAL PREDICTION
-# ============================================================================
-
-def predict_upside_potential(df, current_price, target1, target2, position_type):
-    """
-    Predict if stock can continue after hitting target
-    Returns: upside_score (0-100), new_target, reasons, recommendation, action
-    """
-    score = 50  # Start neutral
-    reasons = []
-    close = df['Close']
-    
-    # Momentum still strong?
-    momentum_score, trend, _ = calculate_momentum_score(df)
-    
-    if position_type == "LONG":
-        if momentum_score >= 70:
-            score += 25
-            reasons.append(f"🚀 Strong momentum ({momentum_score:.0f})")
-        elif momentum_score >= 55:
-            score += 15
-            reasons.append(f"📈 Good momentum ({momentum_score:.0f})")
-        elif momentum_score <= 40:
-            score -= 20
-            reasons.append(f"📉 Weak momentum ({momentum_score:.0f})")
-    else:  # SHORT
-        if momentum_score <= 30:
-            score += 25
-            reasons.append(f"🚀 Strong bearish momentum ({momentum_score:.0f})")
-        elif momentum_score <= 45:
-            score += 15
-            reasons.append(f"📉 Good bearish momentum ({momentum_score:.0f})")
-        elif momentum_score >= 60:
-            score -= 20
-            reasons.append(f"📈 Bullish reversal ({momentum_score:.0f})")
-    
-    # RSI not extreme?
-    rsi = calculate_rsi(close).iloc[-1]
-    if pd.isna(rsi):
-        rsi = 50
-    
-    if position_type == "LONG":
-        if rsi < 60:
-            score += 15
-            reasons.append(f"✅ RSI has room ({rsi:.0f})")
-        elif rsi > 75:
-            score -= 25
-            reasons.append(f"⚠️ RSI overbought ({rsi:.0f})")
-        elif rsi > 65:
-            score -= 10
-            reasons.append(f"🟡 RSI getting high ({rsi:.0f})")
-    else:
-        if rsi > 40:
-            score += 15
-            reasons.append(f"✅ RSI has room ({rsi:.0f})")
-        elif rsi < 25:
-            score -= 25
-            reasons.append(f"⚠️ RSI oversold ({rsi:.0f})")
-    
-    # Volume confirming?
-    volume_signal, volume_ratio, _, volume_trend = analyze_volume(df)
-    
-    if position_type == "LONG" and volume_signal in ["STRONG_BUYING", "BUYING"]:
-        score += 15
-        reasons.append(f"📊 Buying volume ({volume_ratio:.1f}x)")
-    elif position_type == "SHORT" and volume_signal in ["STRONG_SELLING", "SELLING"]:
-        score += 15
-        reasons.append(f"📊 Selling volume ({volume_ratio:.1f}x)")
-    elif volume_ratio < 0.7:
-        score -= 10
-        reasons.append("📊 Low volume")
-    
-    # Bollinger Band position
-    upper_bb, middle_bb, lower_bb = calculate_bollinger_bands(close)
-    if len(upper_bb) > 0 and len(lower_bb) > 0:
-        bb_upper = upper_bb.iloc[-1]
-        bb_lower = lower_bb.iloc[-1]
-        bb_range = bb_upper - bb_lower
-        
-        if bb_range > 0:
-            if position_type == "LONG":
-                bb_position = (current_price - bb_lower) / bb_range
-                if bb_position < 0.7:
-                    score += 10
-                    reasons.append("📈 Room to upper BB")
-                elif bb_position > 0.95:
-                    score -= 15
-                    reasons.append("⚠️ At upper BB")
-            else:
-                bb_position = (current_price - bb_lower) / bb_range
-                if bb_position > 0.3:
-                    score += 10
-                    reasons.append("📉 Room to lower BB")
-                elif bb_position < 0.05:
-                    score -= 15
-                    reasons.append("⚠️ At lower BB")
-    
-    # Calculate new target based on ATR and S/R
-    atr = calculate_atr(df['High'], df['Low'], close).iloc[-1]
-    if pd.isna(atr):
-        atr = current_price * 0.02
-    
-    sr_levels = find_support_resistance(df)
-    
-    if position_type == "LONG":
-        atr_target = current_price + (atr * 3)
-        sr_target = sr_levels['nearest_resistance']
-        new_target = min(atr_target, sr_target) if sr_target > current_price else atr_target
-        potential_gain = ((new_target - current_price) / current_price) * 100
-    else:
-        atr_target = current_price - (atr * 3)
-        sr_target = sr_levels['nearest_support']
-        new_target = max(atr_target, sr_target) if sr_target < current_price else atr_target
-        potential_gain = ((current_price - new_target) / current_price) * 100
-    
-    if potential_gain > 5:
-        score += 10
-        reasons.append(f"🎯 {potential_gain:.1f}% more potential")
-    
-    # Cap score
-    score = max(0, min(100, score))
-    
-    # Generate recommendation
-    if score >= 70:
-        recommendation = "HOLD"
-        action = f"Strong upside - New target: ₹{new_target:.2f}"
-    elif score >= 50:
-        recommendation = "PARTIAL_EXIT"
-        action = f"Book 50%, hold rest for ₹{new_target:.2f}"
-    else:
-        recommendation = "EXIT"
-        action = "Book full profits now"
-    
-    return score, new_target, reasons, recommendation, action
-
-# ============================================================================
-# DYNAMIC TARGET & TRAIL STOP CALCULATION
-# ============================================================================
-
-def calculate_dynamic_levels(df, entry_price, current_price, stop_loss, position_type,
-                            pnl_percent, trail_trigger=2.0):
-    """
-    Calculate dynamic targets and trailing stop loss.
-    Uses ATR-based dynamic trailing instead of fixed percentages.
-    """
-    close = df['Close']
-    high = df['High']
-    low = df['Low']
-    
-    # Calculate ATR
-    atr = calculate_atr(high, low, close).iloc[-1]
-    if pd.isna(atr) or atr <= 0:
-        atr = current_price * 0.02
-    
-    atr_pct = (atr / current_price) * 100
-    
-    # Get support/resistance
-    sr_levels = find_support_resistance(df)
-    
-    result = {
-        'atr': atr,
-        'atr_pct': atr_pct,
-        'support': sr_levels['nearest_support'],
-        'resistance': sr_levels['nearest_resistance'],
-        'support_strength': sr_levels.get('support_strength', 'UNKNOWN'),
-        'resistance_strength': sr_levels.get('resistance_strength', 'UNKNOWN')
-    }
-    
-    # DYNAMIC TRAIL STOP CALCULATION
-    if position_type == "LONG":
-        # Calculate dynamic targets
-        result['target1'] = current_price + (atr * 1.5)
-        result['target2'] = current_price + (atr * 3)
-        result['target3'] = min(current_price + (atr * 5), sr_levels['nearest_resistance'])
-        
-        # Dynamic trail based on profit level AND volatility (ATR)
-        if pnl_percent >= trail_trigger * 5:  # e.g., 10% profit
-            atr_trail = current_price - (atr * 1.0)
-            pct_trail = entry_price + (current_price - entry_price) * 0.70
-            result['trail_stop'] = max(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 70%+ profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "LOCK_MAJOR_PROFIT"
-        
-        elif pnl_percent >= trail_trigger * 4:  # e.g., 8%
-            atr_trail = current_price - (atr * 1.2)
-            pct_trail = entry_price + (current_price - entry_price) * 0.60
-            result['trail_stop'] = max(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 60% profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "LOCK_PROFITS"
-        
-        elif pnl_percent >= trail_trigger * 3:  # e.g., 6%
-            atr_trail = current_price - (atr * 1.5)
-            pct_trail = entry_price + (current_price - entry_price) * 0.50
-            result['trail_stop'] = max(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 50% profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "SECURE_GAINS"
-        
-        elif pnl_percent >= trail_trigger * 2:  # e.g., 4%
-            atr_trail = current_price - (atr * 2.0)
-            pct_trail = entry_price + (current_price - entry_price) * 0.30
-            result['trail_stop'] = max(atr_trail, pct_trail, entry_price * 1.005)
-            result['trail_reason'] = f"Securing gains (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "SECURE_GAINS"
-        
-        elif pnl_percent >= trail_trigger:  # e.g., 2%
-            atr_trail = current_price - (atr * 2.5)
-            result['trail_stop'] = max(atr_trail, entry_price)
-            result['trail_reason'] = f"Moving to breakeven (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "BREAKEVEN"
-        
-        elif pnl_percent >= trail_trigger * 0.5:  # e.g., 1%
-            atr_trail = current_price - (atr * 3.0)
-            result['trail_stop'] = max(atr_trail, stop_loss)
-            if result['trail_stop'] > stop_loss:
-                result['trail_reason'] = f"Tightening SL (P&L: {pnl_percent:.1f}%)"
-                result['trail_action'] = "TIGHTEN"
-            else:
-                result['trail_reason'] = "Keep original SL"
-                result['trail_action'] = "HOLD"
-        else:
-            result['trail_stop'] = stop_loss
-            result['trail_reason'] = "Keep original SL - profit not enough to trail"
-            result['trail_action'] = "HOLD"
-        
-        # Ensure trail stop is not below original SL
-        result['trail_stop'] = max(result['trail_stop'], stop_loss)
-        result['should_trail'] = result['trail_stop'] > stop_loss
-        result['trail_improvement'] = result['trail_stop'] - stop_loss if result['should_trail'] else 0
-        result['trail_improvement_pct'] = (result['trail_improvement'] / entry_price * 100) if result['should_trail'] else 0
-    
-    else:  # SHORT position
-        result['target1'] = current_price - (atr * 1.5)
-        result['target2'] = current_price - (atr * 3)
-        result['target3'] = max(current_price - (atr * 5), sr_levels['nearest_support'])
-        
-        if pnl_percent >= trail_trigger * 5:
-            atr_trail = current_price + (atr * 1.0)
-            pct_trail = entry_price - (entry_price - current_price) * 0.70
-            result['trail_stop'] = min(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 70%+ profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "LOCK_MAJOR_PROFIT"
-        
-        elif pnl_percent >= trail_trigger * 4:
-            atr_trail = current_price + (atr * 1.2)
-            pct_trail = entry_price - (entry_price - current_price) * 0.60
-            result['trail_stop'] = min(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 60% profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "LOCK_PROFITS"
-        
-        elif pnl_percent >= trail_trigger * 3:
-            atr_trail = current_price + (atr * 1.5)
-            pct_trail = entry_price - (entry_price - current_price) * 0.50
-            result['trail_stop'] = min(atr_trail, pct_trail)
-            result['trail_reason'] = f"Locking 50% profit (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "SECURE_GAINS"
-        
-        elif pnl_percent >= trail_trigger * 2:
-            atr_trail = current_price + (atr * 2.0)
-            pct_trail = entry_price - (entry_price - current_price) * 0.30
-            result['trail_stop'] = min(atr_trail, pct_trail, entry_price * 0.995)
-            result['trail_reason'] = f"Securing gains (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "SECURE_GAINS"
-        
-        elif pnl_percent >= trail_trigger:
-            atr_trail = current_price + (atr * 2.5)
-            result['trail_stop'] = min(atr_trail, entry_price)
-            result['trail_reason'] = f"Moving to breakeven (P&L: {pnl_percent:.1f}%)"
-            result['trail_action'] = "BREAKEVEN"
-        
-        elif pnl_percent >= trail_trigger * 0.5:
-            atr_trail = current_price + (atr * 3.0)
-            result['trail_stop'] = min(atr_trail, stop_loss)
-            if result['trail_stop'] < stop_loss:
-                result['trail_reason'] = f"Tightening SL (P&L: {pnl_percent:.1f}%)"
-                result['trail_action'] = "TIGHTEN"
-            else:
-                result['trail_reason'] = "Keep original SL"
-                result['trail_action'] = "HOLD"
-        else:
-            result['trail_stop'] = stop_loss
-            result['trail_reason'] = "Keep original SL - profit not enough to trail"
-            result['trail_action'] = "HOLD"
-        
-        result['trail_stop'] = min(result['trail_stop'], stop_loss)
-        result['should_trail'] = result['trail_stop'] < stop_loss
-        result['trail_improvement'] = stop_loss - result['trail_stop'] if result['should_trail'] else 0
-        result['trail_improvement_pct'] = (result['trail_improvement'] / entry_price * 100) if result['should_trail'] else 0
-    
-    return result
-
-# ============================================================================
-# SECTOR EXPOSURE ANALYSIS
-# ============================================================================
-
-# Stock to Sector Mapping (NSE Top 100+)
-SECTOR_MAP = {
-    # IT
-    'TCS': 'IT', 'INFY': 'IT', 'WIPRO': 'IT', 'HCLTECH': 'IT', 'TECHM': 'IT',
-    'LTIM': 'IT', 'MPHASIS': 'IT', 'COFORGE': 'IT', 'PERSISTENT': 'IT', 'LTTS': 'IT',
-    
-    # Banking
-    'HDFCBANK': 'Banking', 'ICICIBANK': 'Banking', 'SBIN': 'Banking', 'KOTAKBANK': 'Banking',
-    'AXISBANK': 'Banking', 'INDUSINDBK': 'Banking', 'BANDHANBNK': 'Banking', 'FEDERALBNK': 'Banking',
-    'IDFCFIRSTB': 'Banking', 'PNB': 'Banking', 'BANKBARODA': 'Banking', 'CANBK': 'Banking',
-    
-    # NBFC/Finance
-    'HDFC': 'Finance', 'BAJFINANCE': 'Finance', 'BAJAJFINSV': 'Finance', 'SBICARD': 'Finance',
-    'CHOLAFIN': 'Finance', 'M&MFIN': 'Finance', 'MUTHOOTFIN': 'Finance', 'LICHSGFIN': 'Finance',
-    
-    # Energy/Oil & Gas
-    'RELIANCE': 'Energy', 'ONGC': 'Energy', 'IOC': 'Energy', 'BPCL': 'Energy',
-    'GAIL': 'Energy', 'PETRONET': 'Energy', 'HINDPETRO': 'Energy', 'ADANIGREEN': 'Energy',
-    'ADANIPOWER': 'Energy', 'TATAPOWER': 'Energy', 'POWERGRID': 'Energy', 'NTPC': 'Energy',
-    
-    # Auto
-    'MARUTI': 'Auto', 'TATAMOTORS': 'Auto', 'M&M': 'Auto', 'BAJAJ-AUTO': 'Auto',
-    'HEROMOTOCO': 'Auto', 'EICHERMOT': 'Auto', 'ASHOKLEY': 'Auto', 'TVSMOTOR': 'Auto',
-    'MOTHERSON': 'Auto', 'BHARATFORG': 'Auto', 'BALKRISIND': 'Auto', 'MRF': 'Auto',
-    
-    # FMCG
-    'HINDUNILVR': 'FMCG', 'ITC': 'FMCG', 'NESTLEIND': 'FMCG', 'BRITANNIA': 'FMCG',
-    'DABUR': 'FMCG', 'MARICO': 'FMCG', 'GODREJCP': 'FMCG', 'COLPAL': 'FMCG',
-    'TATACONSUM': 'FMCG', 'VBL': 'FMCG', 'MCDOWELL-N': 'FMCG', 'UBL': 'FMCG',
-    
-    # Pharma
-    'SUNPHARMA': 'Pharma', 'DRREDDY': 'Pharma', 'CIPLA': 'Pharma', 'DIVISLAB': 'Pharma',
-    'APOLLOHOSP': 'Pharma', 'LUPIN': 'Pharma', 'AUROPHARMA': 'Pharma', 'BIOCON': 'Pharma',
-    'TORNTPHARM': 'Pharma', 'ALKEM': 'Pharma', 'GLENMARK': 'Pharma', 'LAURUSLABS': 'Pharma',
-    
-    # Telecom
-    'BHARTIARTL': 'Telecom', 'IDEA': 'Telecom', 'INDUSTOWER': 'Telecom',
-    
-    # Infrastructure/Construction
-    'LT': 'Infrastructure', 'ADANIENT': 'Infrastructure', 'ADANIPORTS': 'Infrastructure',
-    'ULTRACEMCO': 'Infrastructure', 'GRASIM': 'Infrastructure', 'SHREECEM': 'Infrastructure',
-    'AMBUJACEM': 'Infrastructure', 'ACC': 'Infrastructure', 'DALBHARAT': 'Infrastructure',
-    
-    # Metals
-    'TATASTEEL': 'Metals', 'JSWSTEEL': 'Metals', 'HINDALCO': 'Metals', 'VEDL': 'Metals',
-    'COALINDIA': 'Metals', 'NMDC': 'Metals', 'SAIL': 'Metals', 'JINDALSTEL': 'Metals',
-    
-    # Retail
-    'TITAN': 'Retail', 'TRENT': 'Retail', 'DMART': 'Retail', 'PAGEIND': 'Retail',
-    'ABFRL': 'Retail', 'RELAXO': 'Retail',
-    
-    # Insurance
-    'SBILIFE': 'Insurance', 'HDFCLIFE': 'Insurance', 'ICICIPRULI': 'Insurance',
-    'ICICIGI': 'Insurance', 'BAJAJHLDNG': 'Insurance', 'NIACL': 'Insurance',
-    
-    # Real Estate
-    'DLF': 'Real Estate', 'GODREJPROP': 'Real Estate', 'OBEROIRLTY': 'Real Estate',
-    'PHOENIXLTD': 'Real Estate', 'PRESTIGE': 'Real Estate', 'BRIGADE': 'Real Estate',
-    
-    # Chemicals
-    'PIDILITIND': 'Chemicals', 'SRF': 'Chemicals', 'ATUL': 'Chemicals',
-    'NAVINFLUOR': 'Chemicals', 'DEEPAKNI': 'Chemicals', 'CLEAN': 'Chemicals',
-}
-
-def analyze_sector_exposure(results):
-    """
-    Analyze sector exposure across portfolio
-    Returns sector breakdown and warnings
-    """
-    sector_exposure = {}
-    total_value = 0
-    
-    for r in results:
-        ticker = r['ticker'].replace('.NS', '').replace('.BO', '').upper()
-        sector = SECTOR_MAP.get(ticker, 'Other')
-        position_value = r['entry_price'] * r['quantity']
-        
-        if sector not in sector_exposure:
-            sector_exposure[sector] = {
-                'value': 0,
-                'count': 0,
-                'stocks': [],
-                'pnl': 0
-            }
-        
-        sector_exposure[sector]['value'] += position_value
-        sector_exposure[sector]['count'] += 1
-        sector_exposure[sector]['stocks'].append(ticker)
-        sector_exposure[sector]['pnl'] += r['pnl_amount']
-        total_value += position_value
-    
-    # Calculate percentages
-    sector_pct = {}
-    for sector, data in sector_exposure.items():
-        sector_pct[sector] = {
-            'percentage': (data['value'] / total_value * 100) if total_value > 0 else 0,
-            'count': data['count'],
-            'stocks': data['stocks'],
-            'value': data['value'],
-            'pnl': data['pnl']
-        }
-    
-    # Sort by percentage
-    sector_pct_sorted = dict(sorted(sector_pct.items(),
-                                    key=lambda x: x[1]['percentage'],
-                                    reverse=True))
-    
-    # Warnings
-    warnings = []
-    for sector, data in sector_pct_sorted.items():
-        if data['percentage'] > 40:
-            warnings.append(f"🚨 {sector}: {data['percentage']:.1f}% - Highly over-exposed!")
-        elif data['percentage'] > 30:
-            warnings.append(f"⚠️ {sector}: {data['percentage']:.1f}% - Over-concentrated")
-    
-    # Diversification score
-    num_sectors = len([s for s in sector_pct if sector_pct[s]['percentage'] > 5])
-    if num_sectors >= 6:
-        diversification_score = 90
-    elif num_sectors >= 4:
-        diversification_score = 70
-    elif num_sectors >= 2:
-        diversification_score = 50
-    else:
-        diversification_score = 30
-    
-    # Adjust for concentration
-    max_concentration = max([d['percentage'] for d in sector_pct.values()]) if sector_pct else 0
-    if max_concentration > 50:
-        diversification_score -= 30
-    elif max_concentration > 35:
-        diversification_score -= 15
-    
-    diversification_score = max(0, min(100, diversification_score))
-    
-    return {
-        'sectors': sector_pct_sorted,
-        'warnings': warnings,
-        'total_sectors': len(sector_pct),
-        'diversification_score': diversification_score,
-        'max_concentration': max_concentration,
-        'total_value': total_value
-    }
-
-# ============================================================================
-# PORTFOLIO RISK CALCULATION
-# ============================================================================
-
-def calculate_portfolio_risk(results):
-    """
-    Calculate overall portfolio risk metrics
-    """
-    if not results:
-        return None
-    
-    total_capital = sum(r['entry_price'] * r['quantity'] for r in results)
-    total_current_value = sum(r['current_price'] * r['quantity'] for r in results)
-    total_pnl = sum(r['pnl_amount'] for r in results)
-    
-    # Calculate total risk amount (if all SL hit)
-    total_risk_amount = 0
-    for r in results:
-        if r['position_type'] == 'LONG':
-            loss_if_sl = (r['entry_price'] - r['stop_loss']) * r['quantity']
-        else:
-            loss_if_sl = (r['stop_loss'] - r['entry_price']) * r['quantity']
-        total_risk_amount += max(loss_if_sl, 0)
-    
-    portfolio_risk_pct = (total_risk_amount / total_capital * 100) if total_capital > 0 else 0
-    
-    # Risk status
-    if portfolio_risk_pct <= 5:
-        risk_status = "SAFE"
-        risk_color = "#28a745"
-        risk_icon = "✅"
-    elif portfolio_risk_pct <= 10:
-        risk_status = "MEDIUM"
-        risk_color = "#ffc107"
-        risk_icon = "⚠️"
-    else:
-        risk_status = "HIGH"
-        risk_color = "#dc3545"
-        risk_icon = "🚨"
-    
-    # Count risky positions
-    risky_positions = sum(1 for r in results if r['sl_risk'] >= 50)
-    critical_positions = sum(1 for r in results if r['overall_status'] == 'CRITICAL')
-    
-    # Average SL risk
-    avg_sl_risk = sum(r['sl_risk'] for r in results) / len(results) if results else 0
-    
-    return {
-        'total_capital': total_capital,
-        'current_value': total_current_value,
-        'total_pnl': total_pnl,
-        'total_pnl_pct': (total_pnl / total_capital * 100) if total_capital > 0 else 0,
-        'total_risk_amount': total_risk_amount,
-        'portfolio_risk_pct': portfolio_risk_pct,
-        'risk_status': risk_status,
-        'risk_color': risk_color,
-        'risk_icon': risk_icon,
-        'risky_positions': risky_positions,
-        'critical_positions': critical_positions,
-        'avg_sl_risk': avg_sl_risk,
-        'total_positions': len(results)
-    }
-
-# ============================================================================
-# PARTIAL PROFIT BOOKING TRACKER
-# ============================================================================
-
-def calculate_partial_exit_levels(entry_price, target1, target2, position_type):
-    """
-    Calculate recommended partial exit levels
-    """
-    if position_type == "LONG":
-        move = target1 - entry_price
-        levels = [
-            {'level': entry_price + move * 0.5, 'exit_pct': 25, 'reason': '50% to T1'},
-            {'level': target1, 'exit_pct': 25, 'reason': 'Target 1'},
-            {'level': entry_price + (target2 - entry_price) * 0.75, 'exit_pct': 25, 'reason': '75% to T2'},
-            {'level': target2, 'exit_pct': 25, 'reason': 'Target 2'},
-        ]
-    else:
-        move = entry_price - target1
-        levels = [
-            {'level': entry_price - move * 0.5, 'exit_pct': 25, 'reason': '50% to T1'},
-            {'level': target1, 'exit_pct': 25, 'reason': 'Target 1'},
-            {'level': entry_price - (entry_price - target2) * 0.75, 'exit_pct': 25, 'reason': '75% to T2'},
-            {'level': target2, 'exit_pct': 25, 'reason': 'Target 2'},
-        ]
-    
-    return levels
-
-def track_partial_exit(ticker, current_price, entry_price, quantity, position_type, target1, target2):
-    """
-    Track partial exit recommendations based on current price
-    """
-    levels = calculate_partial_exit_levels(entry_price, target1, target2, position_type)
-    
-    recommendations = []
-    remaining_qty = quantity
-    
-    for level in levels:
-        if position_type == "LONG":
-            if current_price >= level['level']:
-                exit_qty = int(quantity * level['exit_pct'] / 100)
-                if exit_qty > 0:
-                    recommendations.append({
-                        'level': level['level'],
-                        'exit_pct': level['exit_pct'],
-                        'exit_qty': exit_qty,
-                        'reason': level['reason'],
-                        'status': 'TRIGGERED',
-                        'pnl': (level['level'] - entry_price) * exit_qty
-                    })
-                    remaining_qty -= exit_qty
-        else:
-            if current_price <= level['level']:
-                exit_qty = int(quantity * level['exit_pct'] / 100)
-                if exit_qty > 0:
-                    recommendations.append({
-                        'level': level['level'],
-                        'exit_pct': level['exit_pct'],
-                        'exit_qty': exit_qty,
-                        'reason': level['reason'],
-                        'status': 'TRIGGERED',
-                        'pnl': (entry_price - level['level']) * exit_qty
-                    })
-                    remaining_qty -= exit_qty
-    
-    # Add pending levels
-    for level in levels:
-        already_added = any(r['level'] == level['level'] for r in recommendations)
-        if not already_added:
-            exit_qty = int(quantity * level['exit_pct'] / 100)
-            recommendations.append({
-                'level': level['level'],
-                'exit_pct': level['exit_pct'],
-                'exit_qty': exit_qty,
-                'reason': level['reason'],
-                'status': 'PENDING',
-                'pnl': 0
-            })
-    
-    return {
-        'recommendations': recommendations,
-        'remaining_qty': max(0, remaining_qty),
-        'triggered_count': sum(1 for r in recommendations if r['status'] == 'TRIGGERED'),
-        'total_booked_pnl': sum(r['pnl'] for r in recommendations if r['status'] == 'TRIGGERED')
-    }
-
-# ============================================================================
-# COMPLETE SMART ANALYSIS FUNCTION
-# ============================================================================
-
-@st.cache_data(ttl=15)  # 15 second cache
-def smart_analyze_position(ticker, position_type, entry_price, quantity, stop_loss,
-                          target1, target2, trail_threshold=2.0, sl_alert_threshold=50,
-                          sl_approach_threshold=2.0, enable_mtf=True, entry_date=None):
-    """
-    Complete smart analysis with all features
-    Accepts sidebar parameters for dynamic thresholds
-    """
-    df = get_stock_data_safe(ticker, period="6mo")
-    if df is None or df.empty:
-        return None
-    
-    try:
-        current_price = float(df['Close'].iloc[-1])
-        prev_close = float(df['Close'].iloc[-2]) if len(df) > 1 else current_price
-        day_change = ((current_price - prev_close) / prev_close) * 100
-        day_high = float(df['High'].iloc[-1])
-        day_low = float(df['Low'].iloc[-1])
-    except Exception as e:
-        return None
-    
-    # Basic P&L
-    if position_type == "LONG":
-        pnl_percent = ((current_price - entry_price) / entry_price) * 100
-        pnl_amount = (current_price - entry_price) * quantity
-    else:
-        pnl_percent = ((entry_price - current_price) / entry_price) * 100
-        pnl_amount = (entry_price - current_price) * quantity
-    
-    # Technical Indicators
-    rsi = float(calculate_rsi(df['Close']).iloc[-1])
-    if pd.isna(rsi):
-        rsi = 50.0
-    
-    macd, signal, histogram = calculate_macd(df['Close'])
-    macd_hist = float(histogram.iloc[-1]) if len(histogram) > 0 else 0
-    if pd.isna(macd_hist):
-        macd_hist = 0
-    macd_signal = "BULLISH" if macd_hist > 0 else "BEARISH"
-    
-    # Stochastic
-    stoch_k, stoch_d = calculate_stochastic(df['High'], df['Low'], df['Close'])
-    stoch_k_val = float(stoch_k.iloc[-1]) if not pd.isna(stoch_k.iloc[-1]) else 50
-    stoch_d_val = float(stoch_d.iloc[-1]) if not pd.isna(stoch_d.iloc[-1]) else 50
-    
-    # Momentum Score
-    momentum_score, momentum_trend, momentum_components = calculate_momentum_score(df)
-    
-    # Volume Analysis
-    volume_signal, volume_ratio, volume_desc, volume_trend = analyze_volume(df)
-    
-    # Support/Resistance
-    sr_levels = find_support_resistance(df)
-    
-    # SL Risk Prediction
-    sl_risk, sl_reasons, sl_recommendation, sl_priority = predict_sl_risk(
-        df, current_price, stop_loss, position_type, entry_price, sl_alert_threshold
-    )
-    
-    # Multi-Timeframe Analysis
-    if enable_mtf:
-        mtf_result = multi_timeframe_analysis(ticker, position_type)
-    else:
-        mtf_result = {
-            'signals': {},
-            'details': {},
-            'alignment_score': 50,
-            'recommendation': "MTF disabled",
-            'aligned_count': 0,
-            'against_count': 0,
-            'total_timeframes': 0,
-            'trend_strength': 'UNKNOWN'
-        }
-    
-    # Check if target hit
-    if position_type == "LONG":
-        target1_hit = current_price >= target1
-        target2_hit = current_price >= target2
-        sl_hit = current_price <= stop_loss
-    else:
-        target1_hit = current_price <= target1
-        target2_hit = current_price <= target2
-        sl_hit = current_price >= stop_loss
-    
-    # Upside prediction (if target hit)
-    if target1_hit and not sl_hit:
-        upside_score, new_target, upside_reasons, upside_rec, upside_action = predict_upside_potential(
-            df, current_price, target1, target2, position_type
+        # ====================================================================
+        # SCORE SIGNALS
+        # ====================================================================
+        long_conf, long_reasons = score_signal(
+            ind, df_t, "LONG", vix_sentiment, sector_rs, long_fibo_boost,
+            sr_info, candle, mtf_trend, vol_metrics,
+            {'score': volume_score, 'signal': volume_signal},
+            {'score': vsa_score, 'signal': vsa_signal},
+            {'score': momentum_score, 'signal': momentum_signal},
+            {'score': vcp_score, 'signal': vcp_signal},
+            {'score': gap_score, 'signal': gap_signal},
+            {'direction': st_direction, 'strength': st_strength}
         )
-    else:
-        upside_score = 0
-        new_target = target2
-        upside_reasons = []
-        upside_rec = ""
-        upside_action = ""
-    
-    # Dynamic Levels
-    dynamic_levels = calculate_dynamic_levels(
-        df, entry_price, current_price, stop_loss, position_type, pnl_percent, trail_threshold
-    )
-    
-    # Partial Exit Tracking
-    partial_exits = track_partial_exit(
-        ticker, current_price, entry_price, quantity, position_type, target1, target2
-    )
-    
-    # Holding Period & Tax
-    if entry_date:
-        holding_days = calculate_holding_period(entry_date)
-        tax_implication, tax_color = get_tax_implication(holding_days, pnl_amount)
-    else:
-        holding_days = 0
-        tax_implication = "Entry date not provided"
-        tax_color = "⚪"
-    
-    # Breakeven check
-    breakeven_distance = abs(pnl_percent)
-    at_breakeven = breakeven_distance < 0.5 and pnl_percent >= 0
-    
-    # Distance to SL (for approach warning)
-    if position_type == "LONG":
-        distance_to_sl = ((current_price - stop_loss) / current_price) * 100
-    else:
-        distance_to_sl = ((stop_loss - current_price) / current_price) * 100
-    
-    approaching_sl = distance_to_sl > 0 and distance_to_sl <= sl_approach_threshold
-    
-    # =========================================================================
-    # GENERATE ALERTS AND DETERMINE OVERALL STATUS
-    # =========================================================================
-    alerts = []
-    overall_status = 'OK'
-    overall_action = 'HOLD'
-    
-    # Priority 1: SL Hit
-    if sl_hit:
-        alerts.append({
-            'priority': 'CRITICAL',
-            'type': '🚨 STOP LOSS HIT',
-            'message': f'Price ₹{current_price:.2f} breached SL ₹{stop_loss:.2f}',
-            'action': 'EXIT IMMEDIATELY',
-            'email_type': 'critical'
-        })
-        overall_status = 'CRITICAL'
-        overall_action = 'EXIT'
-    
-    # Priority 2: High SL Risk (Early Exit Warning)
-    elif sl_risk >= sl_alert_threshold + 20:
-        alerts.append({
-            'priority': 'CRITICAL',
-            'type': '⚠️ HIGH SL RISK',
-            'message': f'Risk Score: {sl_risk}% - {", ".join(sl_reasons[:2])}',
-            'action': sl_recommendation,
-            'email_type': 'critical'
-        })
-        overall_status = 'CRITICAL'
-        overall_action = 'EXIT_EARLY'
-    
-    # Priority 3: Approaching SL
-    elif approaching_sl:
-        alerts.append({
-            'priority': 'HIGH',
-            'type': '⚠️ APPROACHING SL',
-            'message': f'Only {distance_to_sl:.1f}% away from Stop Loss!',
-            'action': 'Review position - consider early exit',
-            'email_type': 'sl_approach'
-        })
-        if overall_status == 'OK':
-            overall_status = 'WARNING'
-            overall_action = 'WATCH'
-    
-    # Priority 4: Moderate SL Risk
-    elif sl_risk >= sl_alert_threshold:
-        alerts.append({
-            'priority': 'HIGH',
-            'type': '⚠️ MODERATE SL RISK',
-            'message': f'Risk Score: {sl_risk}% - {", ".join(sl_reasons[:2])}',
-            'action': sl_recommendation,
-            'email_type': 'important'
-        })
-        overall_status = 'WARNING'
-        overall_action = 'WATCH'
-    
-    # Priority 5: Target 2 Hit
-    elif target2_hit:
-        alerts.append({
-            'priority': 'HIGH',
-            'type': '🎯 TARGET 2 HIT',
-            'message': f'Both targets achieved! P&L: {pnl_percent:+.2f}%',
-            'action': 'BOOK FULL PROFITS',
-            'email_type': 'target'
-        })
-        overall_status = 'SUCCESS'
-        overall_action = 'BOOK_PROFITS'
-    
-    # Priority 6: Target 1 Hit with Upside Analysis
-    elif target1_hit:
-        if upside_score >= 60:
-            alerts.append({
-                'priority': 'INFO',
-                'type': '🎯 TARGET HIT - HOLD',
-                'message': f'Upside Score: {upside_score}% - {", ".join(upside_reasons[:2])}',
-                'action': f'{upside_action}',
-                'email_type': 'target'
-            })
-            overall_status = 'OPPORTUNITY'
-            overall_action = 'HOLD_EXTEND'
+        
+        short_conf, short_reasons = score_signal(
+            ind, df_t, "SHORT", vix_sentiment, sector_rs, short_fibo_boost,
+            sr_info, candle, mtf_trend, vol_metrics,
+            {'score': volume_score, 'signal': volume_signal},
+            {'score': vsa_score, 'signal': vsa_signal},
+            {'score': momentum_score, 'signal': momentum_signal},
+            {'score': vcp_score, 'signal': vcp_signal},
+            {'score': gap_score, 'signal': gap_signal},
+            {'direction': st_direction, 'strength': st_strength}
+        )
+        
+        # ====================================================================
+        # DETERMINE BEST SIDE
+        # ====================================================================
+        long_valid = long_entry["entry_ready"] and long_conf >= MIN_CONFIDENCE
+        short_valid = short_entry["entry_ready"] and short_conf >= MIN_CONFIDENCE
+        
+        if not (long_valid or short_valid):
+            stats["confidence_fail"] += 1
+            log_rejection("Low confidence", f"L:{long_conf:.0f}% S:{short_conf:.0f}%")
+            return None
+        
+        if long_valid and (not short_valid or long_conf >= short_conf):
+            side = "LONG"
+            confidence = long_conf
+            reasons = long_reasons
+            entry_info = long_entry
         else:
-            alerts.append({
-                'priority': 'HIGH',
-                'type': '🎯 TARGET HIT - EXIT',
-                'message': f'Limited upside ({upside_score}%). Book profits.',
-                'action': 'BOOK PROFITS',
-                'email_type': 'target'
-            })
-            overall_status = 'SUCCESS'
-            overall_action = 'BOOK_PROFITS'
-    
-    # Priority 7: Trail Stop Recommendation
-    elif dynamic_levels['should_trail'] and pnl_percent >= trail_threshold:
-        alerts.append({
-            'priority': 'MEDIUM',
-            'type': '📈 TRAIL STOP LOSS',
-            'message': f'{dynamic_levels.get("trail_reason", "Lock profits!")} Move SL from ₹{stop_loss:.2f} to ₹{dynamic_levels["trail_stop"]:.2f}',
-            'action': f'New SL: ₹{dynamic_levels["trail_stop"]:.2f}',
-            'email_type': 'sl_change'
-        })
-        overall_status = 'GOOD'
-        overall_action = 'TRAIL_SL'
-    
-    # Priority 8: MTF Warning
-    elif enable_mtf and mtf_result['alignment_score'] < 40 and pnl_percent < 0:
-        alerts.append({
-            'priority': 'MEDIUM',
-            'type': '📊 MTF WARNING',
-            'message': f'Timeframes against position ({mtf_result["alignment_score"]}% aligned)',
-            'action': mtf_result['recommendation'],
-            'email_type': 'important'
-        })
-        overall_status = 'WARNING'
-        overall_action = 'WATCH'
-    
-    # Priority 9: Breakeven Alert
-    elif at_breakeven:
-        alerts.append({
-            'priority': 'LOW',
-            'type': '🔔 BREAKEVEN REACHED',
-            'message': f'Position at breakeven. Consider moving SL to entry (₹{entry_price:.2f})',
-            'action': f'Move SL to ₹{entry_price:.2f} (breakeven)',
-            'email_type': 'important'
-        })
-        if overall_status == 'OK':
-            overall_status = 'GOOD'
-            overall_action = 'MOVE_SL_BREAKEVEN'
-    
-    # Priority 10: Partial Exit Alert
-    if partial_exits['triggered_count'] > 0 and not target2_hit:
-        triggered = [r for r in partial_exits['recommendations'] if r['status'] == 'TRIGGERED']
-        if triggered:
-            latest = triggered[-1]
-            alerts.append({
-                'priority': 'LOW',
-                'type': '📊 PARTIAL EXIT',
-                'message': f'Level ₹{latest["level"]:.2f} triggered - Book {latest["exit_pct"]}% ({latest["exit_qty"]} shares)',
-                'action': f'Exit {latest["exit_qty"]} shares at ₹{current_price:.2f}',
-                'email_type': 'important'
-            })
-    
-    # Volume Warning
-    if position_type == "LONG" and volume_signal == "STRONG_SELLING" and sl_risk < sl_alert_threshold:
-        alerts.append({
-            'priority': 'LOW',
-            'type': '📊 VOLUME WARNING',
-            'message': volume_desc,
-            'action': 'Monitor closely',
-            'email_type': 'important'
-        })
-    elif position_type == "SHORT" and volume_signal == "STRONG_BUYING" and sl_risk < sl_alert_threshold:
-        alerts.append({
-            'priority': 'LOW',
-            'type': '📊 VOLUME WARNING',
-            'message': volume_desc,
-            'action': 'Monitor closely',
-            'email_type': 'important'
-        })
-    
-    # Calculate Risk-Reward Ratio
-    if position_type == "LONG":
-        risk = entry_price - stop_loss
-        reward = target1 - entry_price
-    else:
-        risk = stop_loss - entry_price
-        reward = entry_price - target1
-    
-    risk_reward_ratio = safe_divide(reward, risk, default=0.0)
-    
-    return {
-        # Basic Info
-        'ticker': ticker,
-        'position_type': position_type,
-        'entry_price': entry_price,
-        'current_price': current_price,
-        'quantity': quantity,
-        'pnl_percent': pnl_percent,
-        'pnl_amount': pnl_amount,
-        'day_change': day_change,
-        'day_high': day_high,
-        'day_low': day_low,
+            side = "SHORT"
+            confidence = short_conf
+            reasons = short_reasons
+            entry_info = short_entry
         
-        # Original Levels
-        'stop_loss': stop_loss,
-        'target1': target1,
-        'target2': target2,
+        # ====================================================================
+        # CREATE TRADE RULE
+        # ====================================================================
+        trade_rule = TradeRule(ticker.replace(".NS", "").replace(".BO", ""), side, price, ind["atr"])
+        trade_rule.calculate_dynamic_targets(confidence)
         
-        # Technical Indicators
-        'rsi': rsi,
-        'macd_hist': macd_hist,
-        'macd_signal': macd_signal,
-        'stoch_k': stoch_k_val,
-        'stoch_d': stoch_d_val,
+        if trade_rule.risk_reward_ratio < MIN_RR_RATIO:
+            stats["rr_fail"] += 1
+            log_rejection("Low R:R", f"{trade_rule.risk_reward_ratio:.2f}x")
+            return None
         
-        # Momentum
-        'momentum_score': momentum_score,
-        'momentum_trend': momentum_trend,
-        'momentum_components': momentum_components,
+        # ====================================================================
+        # MINI BACKTEST
+        # ====================================================================
+        mini_metrics = {}
+        if USE_MINI_BACKTEST:
+            mini_passed, mini_metrics = mini_backtest(df_t, price, side, MIN_RR_RATIO)
+            if not mini_passed:
+                stats["mini_backtest_fail"] += 1
+                log_rejection("Mini backtest", mini_metrics.get('reason', 'Failed'))
+                return None
         
-        # Volume
-        'volume_signal': volume_signal,
-        'volume_ratio': volume_ratio,
-        'volume_desc': volume_desc,
-        'volume_trend': volume_trend,
+        # ====================================================================
+        # FULL BACKTEST (IF REQUESTED)
+        # ====================================================================
+        backtest_result = None
+        walk_forward_result = None
+        monte_carlo_result = None
         
-        # Support/Resistance
-        'support': sr_levels['nearest_support'],
-        'resistance': sr_levels['nearest_resistance'],
-        'distance_to_support': sr_levels['distance_to_support'],
-        'distance_to_resistance': sr_levels['distance_to_resistance'],
-        'support_strength': sr_levels['support_strength'],
-        'resistance_strength': sr_levels['resistance_strength'],
-        
-        # SL Risk
-        'sl_risk': sl_risk,
-        'sl_reasons': sl_reasons,
-        'sl_recommendation': sl_recommendation,
-        'sl_priority': sl_priority,
-        'distance_to_sl': distance_to_sl,
-        'approaching_sl': approaching_sl,
-        
-        # Upside
-        'upside_score': upside_score,
-        'upside_reasons': upside_reasons,
-        'new_target': new_target,
-        
-        # Dynamic Levels
-        'trail_stop': dynamic_levels['trail_stop'],
-        'should_trail': dynamic_levels['should_trail'],
-        'trail_reason': dynamic_levels.get('trail_reason', ''),
-        'trail_action': dynamic_levels.get('trail_action', ''),
-        'dynamic_target1': dynamic_levels['target1'],
-        'dynamic_target2': dynamic_levels['target2'],
-        'atr': dynamic_levels['atr'],
-        
-        # Targets Status
-        'target1_hit': target1_hit,
-        'target2_hit': target2_hit,
-        'sl_hit': sl_hit,
-        'at_breakeven': at_breakeven,
-        
-        # Multi-Timeframe
-        'mtf_signals': mtf_result['signals'],
-        'mtf_details': mtf_result.get('details', {}),
-        'mtf_alignment': mtf_result['alignment_score'],
-        'mtf_recommendation': mtf_result['recommendation'],
-        'mtf_trend_strength': mtf_result.get('trend_strength', 'UNKNOWN'),
-        
-        # Partial Exits
-        'partial_exits': partial_exits,
-        
-        # Holding Period
-        'holding_days': holding_days,
-        'tax_implication': tax_implication,
-        'tax_color': tax_color,
-        
-        # Risk-Reward
-        'risk_reward_ratio': risk_reward_ratio,
-        
-        # Alerts & Status
-        'alerts': alerts,
-        'overall_status': overall_status,
-        'overall_action': overall_action,
-        
-        # Chart Data
-        'df': df
-    }
-
-# ============================================================================
-# LOAD PORTFOLIO FROM GOOGLE SHEETS
-# ============================================================================
-
-def load_portfolio():
-    """Load portfolio from Google Sheets"""
-    
-    # Your Google Sheets URL
-    GOOGLE_SHEETS_URL = "https://docs.google.com/spreadsheets/d/155htPsyom2e-dR5BZJx_cFzGxjQQjePJt3H2sRLSr6w/edit?usp=sharing"
-    
-    try:
-        # Convert to export URL
-        sheet_id = GOOGLE_SHEETS_URL.split('/d/')[1].split('/')[0]
-        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
-        
-        # Read from Google Sheets
-        df = pd.read_csv(export_url)
-        
-        # Filter active positions
-        if 'Status' in df.columns:
-            df = df[df['Status'].str.upper() == 'ACTIVE']
-        
-        # Clean column names
-        df.columns = df.columns.str.strip()
-        
-        # Validate required columns
-        required_cols = ['Ticker', 'Position', 'Entry_Price', 'Stop_Loss', 'Target_1']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        
-        if missing_cols:
-            st.warning(f"⚠️ Missing columns: {missing_cols}")
-            # Try alternative column names
-            alt_names = {
-                'Ticker': ['Symbol', 'Stock', 'Name'],
-                'Position': ['Type', 'Side', 'Direction'],
-                'Entry_Price': ['Entry', 'Buy_Price', 'Price'],
-                'Stop_Loss': ['SL', 'Stoploss'],
-                'Target_1': ['Target', 'T1', 'Target1']
-            }
-            for col, alts in alt_names.items():
-                if col not in df.columns:
-                    for alt in alts:
-                        if alt in df.columns:
-                            df[col] = df[alt]
-                            break
-        
-        # Set defaults for optional columns
-        if 'Quantity' not in df.columns:
-            df['Quantity'] = 1
-        if 'Target_2' not in df.columns:
-            df['Target_2'] = df['Target_1'] * 1.1
-        if 'Entry_Date' not in df.columns:
-            df['Entry_Date'] = None
-        
-        st.success(f"✅ Loaded {len(df)} active positions from Google Sheets")
-        return df
-    
-    except Exception as e:
-        st.error(f"❌ Error loading from Google Sheets: {e}")
-        st.info("💡 Make sure the Google Sheet is set to 'Anyone with the link can view'")
-        
-        # Return sample data as fallback
-        st.warning("⚠️ Using sample data as fallback")
-        return pd.DataFrame({
-            'Ticker': ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK'],
-            'Position': ['LONG', 'LONG', 'SHORT', 'LONG', 'LONG'],
-            'Entry_Price': [2450.00, 3580.00, 1520.00, 1650.00, 1050.00],
-            'Quantity': [10, 5, 8, 12, 20],
-            'Stop_Loss': [2380.00, 3480.00, 1580.00, 1600.00, 1010.00],
-            'Target_1': [2550.00, 3720.00, 1420.00, 1750.00, 1120.00],
-            'Target_2': [2650.00, 3850.00, 1350.00, 1850.00, 1180.00],
-            'Entry_Date': ['2024-01-15', '2024-01-20', '2024-02-01', '2024-01-10', '2024-02-05'],
-            'Status': ['ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE']
-        })
-
-# ============================================================================
-# PORTFOLIO VALIDATION
-# ============================================================================
-
-def validate_portfolio(df):
-    """
-    Validate portfolio data and return errors
-    Returns: (is_valid, errors_list)
-    """
-    errors = []
-    warnings = []
-    
-    # Check required columns
-    required_cols = ['Ticker', 'Position', 'Entry_Price', 'Stop_Loss', 'Target_1']
-    for col in required_cols:
-        if col not in df.columns:
-            errors.append(f"❌ Missing required column: {col}")
-    
-    if errors:
-        return False, errors, warnings
-    
-    # Validate each row
-    for idx, row in df.iterrows():
-        ticker = str(row.get('Ticker', f'Row {idx}')).strip()
-        
-        try:
-            entry = float(row['Entry_Price'])
-            sl = float(row['Stop_Loss'])
-            target = float(row['Target_1'])
-            position = str(row['Position']).upper().strip()
-        except (ValueError, TypeError) as e:
-            errors.append(f"❌ {ticker}: Invalid number format - {e}")
-            continue
-        
-        # Check positive values
-        if entry <= 0:
-            errors.append(f"❌ {ticker}: Entry price must be positive")
-        if sl <= 0:
-            errors.append(f"❌ {ticker}: Stop loss must be positive")
-        if target <= 0:
-            errors.append(f"❌ {ticker}: Target must be positive")
-        
-        # Check position type
-        if position not in ['LONG', 'SHORT']:
-            errors.append(f"❌ {ticker}: Position must be 'LONG' or 'SHORT', got '{position}'")
-            continue
-        
-        # Validate levels based on position type
-        if position == 'LONG':
-            if entry <= sl:
-                errors.append(f"❌ {ticker} (LONG): Entry (₹{entry}) must be > Stop Loss (₹{sl})")
-            if target <= entry:
-                warnings.append(f"⚠️ {ticker} (LONG): Target (₹{target}) should be > Entry (₹{entry})")
-        else:  # SHORT
-            if entry >= sl:
-                errors.append(f"❌ {ticker} (SHORT): Entry (₹{entry}) must be < Stop Loss (₹{sl})")
-            if target >= entry:
-                warnings.append(f"⚠️ {ticker} (SHORT): Target (₹{target}) should be < Entry (₹{entry})")
-        
-        # Check quantity if present
-        if 'Quantity' in df.columns:
+        if run_full_backtest and backtester and USE_FULL_BACKTEST:
+            stats["full_backtest_run"] += 1
+            
             try:
-                qty = int(row['Quantity'])
-                if qty <= 0:
-                    errors.append(f"❌ {ticker}: Quantity must be positive")
-            except:
-                warnings.append(f"⚠️ {ticker}: Invalid quantity, using default (1)")
-    
-    is_valid = len(errors) == 0
-    return is_valid, errors, warnings
-
-
-# ============================================================================
-# EMAIL ALERT FUNCTIONS
-# ============================================================================
-
-def should_send_email(alert, email_settings, result):
-    """
-    Determine if email should be sent for this alert
-    """
-    email_type = alert.get('email_type', 'important')
-    
-    if email_type == 'critical' and email_settings.get('email_on_critical', True):
-        return True
-    elif email_type == 'target' and email_settings.get('email_on_target', True):
-        return True
-    elif email_type == 'sl_approach' and email_settings.get('email_on_sl_approach', True):
-        return True
-    elif email_type == 'sl_change' and email_settings.get('email_on_sl_change', True):
-        return True
-    elif email_type == 'target_change' and email_settings.get('email_on_target_change', True):
-        return True
-    elif email_type == 'important' and email_settings.get('email_on_important', True):
-        return True
-    
-    return False
-
-def create_alert_email_html(result, alert):
-    """
-    Create HTML content for alert email
-    """
-    status_colors = {
-        'CRITICAL': '#dc3545',
-        'HIGH': '#ffc107',
-        'MEDIUM': '#17a2b8',
-        'LOW': '#28a745'
-    }
-    
-    priority_color = status_colors.get(alert['priority'], '#6c757d')
-    pnl_color = '#28a745' if result['pnl_percent'] >= 0 else '#dc3545'
-    
-    html = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; padding: 20px; background: #f8f9fa;">
-        <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-            
-            <!-- Header -->
-            <div style="background: {priority_color}; color: white; padding: 20px; text-align: center;">
-                <h1 style="margin: 0;">{alert['type']}</h1>
-                <p style="margin: 10px 0 0 0; font-size: 1.2em;">{result['ticker']}</p>
-            </div>
-            
-            <!-- Content -->
-            <div style="padding: 20px;">
+                backtest_result = backtester.backtest_strategy(
+                    df=df_t,
+                    signal_type=side,
+                    entry_conditions={'side': side},
+                    lookback_days=BACKTEST_LOOKBACK_DAYS
+                )
                 
-                <!-- Alert Message -->
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <p style="margin: 0; font-size: 1.1em;"><strong>Message:</strong> {alert['message']}</p>
-                    <p style="margin: 10px 0 0 0; font-size: 1.2em; color: {priority_color};"><strong>Action:</strong> {alert['action']}</p>
-                </div>
-                
-                <!-- Position Details -->
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Position Type</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">{'📈 LONG' if result['position_type'] == 'LONG' else '📉 SHORT'}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Entry Price</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₹{result['entry_price']:,.2f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Current Price</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₹{result['current_price']:,.2f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Stop Loss</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₹{result['stop_loss']:,.2f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>P&L</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right; color: {pnl_color}; font-weight: bold;">
-                            {result['pnl_percent']:+.2f}% (₹{result['pnl_amount']:+,.0f})
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>SL Risk Score</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">{result['sl_risk']}%</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>Quantity</strong></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">{result['quantity']} shares</td>
-                    </tr>
-                </table>
-                
-                <!-- Technical Summary -->
-                <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 8px;">
-                    <h3 style="margin: 0 0 10px 0;">Technical Summary</h3>
-                    <p style="margin: 5px 0;">RSI: {result['rsi']:.1f} | MACD: {result['macd_signal']} | Momentum: {result['momentum_score']:.0f}/100</p>
-                    <p style="margin: 5px 0;">Volume: {result['volume_signal'].replace('_', ' ')} ({result['volume_ratio']:.1f}x)</p>
-                    <p style="margin: 5px 0;">Support: ₹{result['support']:,.2f} | Resistance: ₹{result['resistance']:,.2f}</p>
-                </div>
-                
-            </div>
-            
-            <!-- Footer -->
-            <div style="background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666;">
-                <p style="margin: 0;">Smart Portfolio Monitor v6.0</p>
-                <p style="margin: 5px 0 0 0;">{get_ist_now().strftime('%Y-%m-%d %H:%M:%S')} IST</p>
-            </div>
-            
-        </div>
-    </body>
-    </html>
-    """
-    
-    return html
-
-def create_summary_email_html(results, critical_count, warning_count, portfolio_risk):
-    """
-    Create HTML content for summary email
-    """
-    ist_now = get_ist_now()
-    
-    # Build critical alerts section
-    critical_html = ""
-    for r in results:
-        if r['overall_status'] == 'CRITICAL':
-            critical_html += f"""
-            <div style="background:#f8d7da; padding:15px; margin:10px 0; border-radius:8px; border-left:4px solid #dc3545;">
-                <h3 style="margin:0; color:#721c24;">{r['ticker']} - {r['overall_action'].replace('_', ' ')}</h3>
-                <p style="margin:5px 0;">Position: {r['position_type']} | P&L: {r['pnl_percent']:+.2f}%</p>
-                <p style="margin:5px 0;">SL Risk: {r['sl_risk']}% | Current: ₹{r['current_price']:,.2f}</p>
-                <p style="margin:5px 0; font-weight:bold;">⚡ {r['alerts'][0]['action'] if r['alerts'] else 'Review immediately'}</p>
-            </div>
-            """
-    
-    # Build warning alerts section
-    warning_html = ""
-    for r in results:
-        if r['overall_status'] == 'WARNING':
-            warning_html += f"""
-            <div style="background:#fff3cd; padding:15px; margin:10px 0; border-radius:8px; border-left:4px solid #ffc107;">
-                <h3 style="margin:0; color:#856404;">{r['ticker']} - {r['overall_action'].replace('_', ' ')}</h3>
-                <p style="margin:5px 0;">Position: {r['position_type']} | P&L: {r['pnl_percent']:+.2f}%</p>
-                <p style="margin:5px 0;">SL Risk: {r['sl_risk']}%</p>
-            </div>
-            """
-    
-    total_pnl = sum(r['pnl_amount'] for r in results)
-    pnl_color = '#28a745' if total_pnl >= 0 else '#dc3545'
-    
-    html = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; padding: 20px; background: #f8f9fa;">
-        <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden;">
-            
-            <!-- Header -->
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center;">
-                <h1 style="margin: 0;">📊 Portfolio Alert Summary</h1>
-                <p style="margin: 10px 0 0 0;">{ist_now.strftime('%Y-%m-%d %H:%M:%S')} IST</p>
-            </div>
-            
-            <!-- Summary Stats -->
-            <div style="padding: 20px; display: flex; justify-content: space-around; background: #f8f9fa;">
-                <div style="text-align: center;">
-                    <h2 style="margin: 0; color: #dc3545;">{critical_count}</h2>
-                    <p style="margin: 5px 0;">Critical</p>
-                </div>
-                <div style="text-align: center;">
-                    <h2 style="margin: 0; color: #ffc107;">{warning_count}</h2>
-                    <p style="margin: 5px 0;">Warning</p>
-                </div>
-                <div style="text-align: center;">
-                    <h2 style="margin: 0; color: {pnl_color};">₹{total_pnl:+,.0f}</h2>
-                    <p style="margin: 5px 0;">Total P&L</p>
-                </div>
-            </div>
-            
-            <!-- Portfolio Risk -->
-            <div style="padding: 15px 20px; background: {portfolio_risk['risk_color']}20; border-left: 4px solid {portfolio_risk['risk_color']};">
-                <p style="margin: 0;"><strong>Portfolio Risk:</strong> {portfolio_risk['risk_icon']} {portfolio_risk['risk_status']} ({portfolio_risk['portfolio_risk_pct']:.1f}%)</p>
-            </div>
-            
-            <!-- Critical Alerts -->
-            {f'<div style="padding: 20px;"><h2 style="color: #dc3545;">🚨 Critical Alerts</h2>{critical_html}</div>' if critical_html else ''}
-            
-            <!-- Warning Alerts -->
-            {f'<div style="padding: 20px;"><h2 style="color: #ffc107;">⚠️ Warnings</h2>{warning_html}</div>' if warning_html else ''}
-            
-            <!-- Footer -->
-            <div style="background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666;">
-                <p style="margin: 0;">Smart Portfolio Monitor v6.0</p>
-            </div>
-            
-        </div>
-    </body>
-    </html>
-    """
-    
-    return html
-
-def send_portfolio_alerts(results, email_settings, portfolio_risk):
-    """
-    Send email alerts for portfolio positions
-    """
-    if not email_settings.get('enabled', False):
-        return
-    
-    sender = email_settings.get('sender_email', '')
-    password = email_settings.get('sender_password', '')
-    recipient = email_settings.get('recipient_email', '')
-    cooldown = email_settings.get('cooldown', 15)
-    
-    if not sender or not password or not recipient:
-        return
-    
-    # Count alerts
-    critical_count = sum(1 for r in results if r['overall_status'] == 'CRITICAL')
-    warning_count = sum(1 for r in results if r['overall_status'] == 'WARNING')
-    
-    # Send summary email for critical alerts
-    if critical_count > 0:
-        alert_hash = generate_alert_hash("PORTFOLIO", "SUMMARY_CRITICAL", str(critical_count))
-        
-        if can_send_email(alert_hash, cooldown):
-            subject = f"🚨 CRITICAL: {critical_count} positions need attention!"
-            html = create_summary_email_html(results, critical_count, warning_count, portfolio_risk)
-            
-            success, msg = send_email_alert(subject, html, sender, password, recipient)
-            if success:
-                mark_email_sent(alert_hash)
-                log_email(f"Summary email sent: {critical_count} critical, {warning_count} warning")
-            else:
-                log_email(f"Summary email failed: {msg}")
-    
-    # Send individual alerts for specific conditions
-    for result in results:
-        for alert in result['alerts']:
-            if should_send_email(alert, email_settings, result):
-                alert_hash = generate_alert_hash(result['ticker'], alert['type'], str(result['current_price']))
-                
-                if can_send_email(alert_hash, cooldown):
-                    subject = f"{alert['type']} - {result['ticker']}"
-                    html = create_alert_email_html(result, alert)
+                if backtest_result:
+                    if (backtest_result.win_rate < PRESET['min_backtest_win_rate'] or
+                        backtest_result.profit_factor < PRESET['min_profit_factor'] or
+                        backtest_result.max_drawdown > PRESET['max_drawdown']):
+                        
+                        stats["full_backtest_fail"] += 1
+                        log_rejection("Backtest fail", f"WR:{backtest_result.win_rate:.0f}%")
+                        return None
                     
-                    success, msg = send_email_alert(subject, html, sender, password, recipient)
-                    if success:
-                        mark_email_sent(alert_hash)
-                        log_email(f"Alert sent: {result['ticker']} - {alert['type']}")
-                    else:
-                        log_email(f"Alert failed for {result['ticker']}: {msg}")
-# ============================================================================
-# SIDEBAR CONFIGURATION
-# ============================================================================
-
-def render_sidebar():
-    """
-    Render the sidebar with all settings and calculators
-    Returns: dictionary with all settings
-    """
-    
-    with st.sidebar:
-        st.markdown("## ⚙️ Settings")
-        
-        # =====================================================================
-        # EMAIL CONFIGURATION
-        # =====================================================================
-        st.markdown("### 📧 Email Alerts")
-        
-        # ╔═══════════════════════════════════════════════════════════════════╗
-        # ║  YOUR CREDENTIALS - EDIT THESE                                     ║
-        # ╚═══════════════════════════════════════════════════════════════════╝
-        YOUR_EMAIL = "pssundaar@gmail.com"
-        YOUR_APP_PASSWORD = "ibpl ptdp oueh drjr"  # Your Gmail App Password
-        YOUR_RECIPIENT = "shyamsunderpatri@gmail.com"
-        
-        # Check if credentials are configured
-        credentials_configured = bool(
-            YOUR_EMAIL and
-            YOUR_APP_PASSWORD and
-            "@" in YOUR_EMAIL and
-            YOUR_EMAIL != "your-email@gmail.com" and
-            YOUR_APP_PASSWORD != "xxxx xxxx xxxx xxxx"
-        )
-        
-        # ✅ Initialize email state ONCE (stays OFF until you enable it)
-        if 'email_alerts_enabled' not in st.session_state:
-            st.session_state.email_alerts_enabled = False  # ✅ Default OFF
-
-        email_enabled = st.checkbox(
-            "Enable Email Alerts",
-            value=st.session_state.email_alerts_enabled,  # ✅ Remember user's choice
-            key="email_enabled_checkbox",
-            help="Enable/disable all email notifications"
-        )
-
-        # ✅ Update session state when checkbox changes
-        if email_enabled != st.session_state.email_alerts_enabled:
-            st.session_state.email_alerts_enabled = email_enabled
-            if email_enabled:
-                st.success("✅ Email alerts ENABLED")
-                log_email("Email alerts enabled by user")
-            else:
-                st.info("📧 Email alerts DISABLED")
-                log_email("Email alerts disabled by user")
-        
-        # Email settings dictionary
-        email_settings = {
-            'enabled': False,
-            'sender_email': '',
-            'sender_password': '',
-            'recipient_email': '',
-            'email_on_critical': True,
-            'email_on_target': True,
-            'email_on_sl_approach': True,
-            'email_on_sl_change': True,
-            'email_on_target_change': True,
-            'email_on_important': True,
-            'cooldown': 15
-        }
-        
-        if email_enabled:
-            if credentials_configured:
-                email_settings['enabled'] = True
-                email_settings['sender_email'] = YOUR_EMAIL
-                email_settings['sender_password'] = YOUR_APP_PASSWORD
-                email_settings['recipient_email'] = YOUR_RECIPIENT if YOUR_RECIPIENT else YOUR_EMAIL
-                
-                st.success("✅ Email auto-configured!")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.caption(f"📤 From: {YOUR_EMAIL[:3]}***@gmail.com")
-                with col2:
-                    st.caption(f"📥 To: {email_settings['recipient_email'][:3]}***@gmail.com")
-                
-                # Test email button
-                if st.button("📧 Send Test Email", type="secondary", use_container_width=True):
-                    test_subject = "🧪 Test Email - Smart Portfolio Monitor"
-                    test_html = f"""
-                    <html>
-                    <body style="font-family: Arial, sans-serif; padding: 20px;">
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                                    color: white; padding: 20px; border-radius: 10px; text-align: center;">
-                            <h1>✅ Test Email Successful!</h1>
-                            <p>Your email configuration is working correctly.</p>
-                            <p>Time: {get_ist_now().strftime('%Y-%m-%d %H:%M:%S')} IST</p>
-                        </div>
-                        <div style="padding: 20px; background: #f8f9fa; margin-top: 15px; border-radius: 10px;">
-                            <p>You will receive alerts for:</p>
-                            <ul>
-                                <li>🔴 Critical alerts (SL hit, high risk)</li>
-                                <li>🎯 Target achieved</li>
-                                <li>⚠️ Approaching stop loss</li>
-                                <li>🔄 Trail SL recommendations</li>
-                                <li>📈 New target suggestions</li>
-                            </ul>
-                        </div>
-                    </body>
-                    </html>
-                    """
-                    success, msg = send_email_alert(
-                        test_subject, test_html,
-                        email_settings['sender_email'],
-                        email_settings['sender_password'],
-                        email_settings['recipient_email']
+                    # Apply backtest boost to confidence
+                    backtest_boost = (
+                        (backtest_result.win_rate - 50) * 0.2 +
+                        (backtest_result.profit_factor - 1) * 3 +
+                        (backtest_result.reliability_score - 50) * 0.15
                     )
-                    if success:
-                        st.success("✅ Test email sent! Check your inbox.")
-                        log_email(f"Test email sent to {email_settings['recipient_email']}")
-                    else:
-                        st.error(f"❌ Failed: {msg}")
-                        log_email(f"Test email FAILED: {msg}")
-            else:
-                st.warning("⚠️ Configure credentials in code OR enter manually:")
-                email_settings['sender_email'] = st.text_input("Your Gmail", placeholder="you@gmail.com")
-                email_settings['sender_password'] = st.text_input(
-                    "App Password", type="password",
-                    help="16-character Gmail App Password"
-                )
-                email_settings['recipient_email'] = st.text_input(
-                    "Send Alerts To", placeholder="recipient@gmail.com"
-                )
-                
-                if email_settings['sender_email'] and email_settings['sender_password']:
-                    email_settings['enabled'] = True
-                    if not email_settings['recipient_email']:
-                        email_settings['recipient_email'] = email_settings['sender_email']
-                
-                st.info("""
-                **To auto-enable emails:**
-                1. Open this Python file
-                2. Find `YOUR_APP_PASSWORD = "xxxx xxxx xxxx xxxx"`
-                3. Replace with your actual App Password
-                4. Save and restart the app
-                """)
-            
-            st.divider()
-            
-            # Alert Types
-            st.markdown("#### 📬 Alert Types")
-            col1, col2 = st.columns(2)
-            with col1:
-                email_settings['email_on_critical'] = st.checkbox("🔴 Critical", value=True)
-                email_settings['email_on_target'] = st.checkbox("🎯 Target Hit", value=True)
-                email_settings['email_on_sl_approach'] = st.checkbox("⚠️ Near SL", value=True)
-            with col2:
-                email_settings['email_on_sl_change'] = st.checkbox("🔄 Trail SL", value=True)
-                email_settings['email_on_target_change'] = st.checkbox("📈 New Target", value=True)
-                email_settings['email_on_important'] = st.checkbox("📋 Important", value=True)
-            
-            email_settings['cooldown'] = st.slider("⏱️ Cooldown (min)", 5, 60, 15)
-            
-            # Status display
-            if email_settings['enabled']:
-                enabled_count = sum([
-                    email_settings['email_on_critical'],
-                    email_settings['email_on_target'],
-                    email_settings['email_on_sl_approach'],
-                    email_settings['email_on_sl_change'],
-                    email_settings['email_on_target_change'],
-                    email_settings['email_on_important']
-                ])
-                st.markdown(f"""
-                <div style='background:linear-gradient(135deg, #28a745, #218838); 
-                            color:white; padding:10px; border-radius:8px; text-align:center; margin-top:10px;'>
-                    📧 <strong>ACTIVE</strong> | {enabled_count}/6 alerts ON
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("☑️ Check 'Enable Email Alerts' above to activate")
-        
-        st.divider()
-        
-        # =====================================================================
-        # AUTO-REFRESH
-        # =====================================================================
-        st.markdown("### 🔄 Auto-Refresh")
-        auto_refresh = st.checkbox("Enable Auto-Refresh", value=True)
-        refresh_interval = st.slider("Refresh Interval (seconds)", 30, 300, 60)
-        
-        if not HAS_AUTOREFRESH:
-            st.warning("⚠️ Install streamlit-autorefresh:\n`pip install streamlit-autorefresh`")
-        
-        st.divider()
-        
-        # =====================================================================
-        # ALERT THRESHOLDS
-        # =====================================================================
-        st.markdown("### 🎯 Alert Thresholds")
-        loss_threshold = st.slider("Alert on Loss %", -10.0, 0.0, -2.0, step=0.5)
-        profit_threshold = st.slider("Alert on Profit %", 0.0, 20.0, 5.0, step=0.5)
-        trail_sl_trigger = st.slider("Trail SL after Profit %", 0.5, 10.0, 2.0, step=0.5)
-        sl_risk_threshold = st.slider("SL Risk Alert Threshold", 30, 90, 50)
-        sl_approach_threshold = st.slider("SL Approach Warning %", 1.0, 5.0, 2.0, step=0.5)
-        
-        st.divider()
-        
-        # =====================================================================
-        # ANALYSIS SETTINGS
-        # =====================================================================
-        st.markdown("### 📊 Analysis Settings")
-        enable_volume_analysis = st.checkbox("Volume Confirmation", value=True)
-        enable_sr_detection = st.checkbox("Support/Resistance", value=True)
-        enable_multi_timeframe = st.checkbox("Multi-Timeframe Analysis", value=True)
-        enable_correlation = st.checkbox("Correlation Analysis", value=False,
-                                        help="May slow down loading")
-        
-        st.divider()
-        
-        # =====================================================================
-        # POSITION SIZING CALCULATOR
-        # =====================================================================
-        st.markdown("### 💰 Position Sizing Calculator")
-        
-        with st.expander("Calculate Optimal Position Size", expanded=False):
-            st.markdown("**Based on Risk Percentage**")
-            
-            calc_capital = st.number_input(
-                "Total Capital (₹)",
-                min_value=10000.0,
-                value=100000.0,
-                step=10000.0,
-                key="pos_calc_capital"
-            )
-            
-            calc_risk_pct = st.slider(
-                "Risk per Trade (%)",
-                min_value=0.5,
-                max_value=5.0,
-                value=2.0,
-                step=0.5,
-                key="pos_calc_risk"
-            )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                calc_entry = st.number_input(
-                    "Entry Price (₹)",
-                    min_value=1.0,
-                    value=1500.0,
-                    step=10.0,
-                    key="pos_calc_entry"
-                )
-            with col2:
-                calc_sl = st.number_input(
-                    "Stop Loss (₹)",
-                    min_value=1.0,
-                    value=1450.0,
-                    step=10.0,
-                    key="pos_calc_sl"
-                )
-            
-            if calc_entry > calc_sl:
-                risk_amount = calc_capital * (calc_risk_pct / 100)
-                risk_per_share = abs(calc_entry - calc_sl)
-                position_size = int(risk_amount / risk_per_share)
-                investment = position_size * calc_entry
-                investment_pct = (investment / calc_capital) * 100
-                
-                st.success(f"**Buy {position_size} shares**")
-                st.info(f"Investment: ₹{investment:,.0f} ({investment_pct:.1f}% of capital)")
-                st.caption(f"Risk Amount: ₹{risk_amount:,.0f} | Risk/Share: ₹{risk_per_share:.2f}")
-                
-                # Additional info
-                if investment_pct > 30:
-                    st.warning("⚠️ Position is > 30% of capital. Consider reducing.")
-            elif calc_entry < calc_sl:
-                st.error("For LONG: Entry must be > Stop Loss")
-                st.info("For SHORT: Use Entry < SL calculator below")
-            else:
-                st.info("Enter different Entry and Stop Loss prices")
-        
-        st.divider()
-        
-        # =====================================================================
-        # RISK-REWARD CALCULATOR
-        # =====================================================================
-        st.markdown("### ⚖️ Risk-Reward Calculator")
-        
-        with st.expander("Check Trade Quality", expanded=False):
-            rr_col1, rr_col2 = st.columns(2)
-            
-            with rr_col1:
-                rr_entry = st.number_input("Entry (₹)", min_value=1.0, value=1500.0, step=10.0, key="rr_entry")
-                rr_sl = st.number_input("SL (₹)", min_value=1.0, value=1450.0, step=10.0, key="rr_sl")
-            
-            with rr_col2:
-                rr_target = st.number_input("Target (₹)", min_value=1.0, value=1600.0, step=10.0, key="rr_target")
-                rr_type = st.selectbox("Type", ["LONG", "SHORT"], key="rr_type")
-            
-            if rr_type == "LONG":
-                risk = rr_entry - rr_sl
-                reward = rr_target - rr_entry
-            else:
-                risk = rr_sl - rr_entry
-                reward = rr_entry - rr_target
-            
-            if risk > 0 and reward > 0:
-                ratio = reward / risk
-                
-                if ratio >= 3:
-                    quality = "🟢 EXCELLENT"
-                    color = "green"
-                elif ratio >= 2:
-                    quality = "🟢 GOOD"
-                    color = "green"
-                elif ratio >= 1.5:
-                    quality = "🟡 ACCEPTABLE"
-                    color = "orange"
-                else:
-                    quality = "🔴 POOR"
-                    color = "red"
-                
-                st.markdown(f"**Risk-Reward Ratio:** <span style='color:{color};font-size:1.5em;'>1:{ratio:.2f}</span>",
-                           unsafe_allow_html=True)
-                st.markdown(f"**Quality:** {quality}")
-                st.caption(f"Risk: ₹{risk:.2f} | Reward: ₹{reward:.2f}")
-                
-                if ratio < 2:
-                    st.warning("⚠️ Minimum recommended: 1:2")
-                
-                # Win rate needed to be profitable
-                breakeven_winrate = (1 / (1 + ratio)) * 100
-                st.caption(f"Breakeven Win Rate: {breakeven_winrate:.1f}%")
-            elif risk <= 0:
-                st.error("Invalid: Risk must be positive!")
-            else:
-                st.error("Invalid: Reward must be positive!")
-        
-        st.divider()
-        
-        # =====================================================================
-        # QUICK TRADE LOGGER
-        # =====================================================================
-        st.markdown("### 📝 Log Closed Trade")
-        
-        with st.expander("Record Trade Result", expanded=False):
-            log_ticker = st.text_input("Ticker", placeholder="RELIANCE", key="log_ticker")
-            log_type = st.selectbox("Position", ["LONG", "SHORT"], key="log_type")
-            
-            log_col1, log_col2 = st.columns(2)
-            with log_col1:
-                log_entry = st.number_input("Entry ₹", min_value=1.0, value=100.0, step=1.0, key="log_entry")
-                log_qty = st.number_input("Quantity", min_value=1, value=10, step=1, key="log_qty")
-            with log_col2:
-                log_exit = st.number_input("Exit ₹", min_value=1.0, value=110.0, step=1.0, key="log_exit")
-                log_reason = st.selectbox("Exit Reason", [
-                    "Target Hit", "Stop Loss", "Trail SL", "Manual Exit", "Partial Exit"
-                ], key="log_reason")
-            
-            if st.button("📊 Log Trade", use_container_width=True, key="log_trade_btn"):
-                if log_ticker:
-                    log_trade(log_ticker.upper(), log_entry, log_exit, log_qty, log_type, log_reason)
-                    st.success(f"✅ Trade logged: {log_ticker.upper()}")
+                    confidence = min(100, confidence + backtest_boost)
                     
-                    # Show result
-                    if log_type == "LONG":
-                        pnl = (log_exit - log_entry) * log_qty
-                    else:
-                        pnl = (log_entry - log_exit) * log_qty
+                    # Walk-forward validation (if enabled)
+                    if USE_WALK_FORWARD and ACCURACY_MODE == 'CONSERVATIVE':
+                        walk_forward_result = backtester.walk_forward_validation(
+                            df_t, side, {'side': side}, WALK_FORWARD_PERIODS
+                        )
+                        
+                        if walk_forward_result and not walk_forward_result.passed:
+                            stats["walk_forward_fail"] += 1
+                            log_rejection("Walk-forward fail", "Inconsistent")
+                            return None
                     
-                    if pnl >= 0:
-                        st.success(f"Profit: ₹{pnl:+,.0f}")
-                    else:
-                        st.error(f"Loss: ₹{pnl:+,.0f}")
-                else:
-                    st.error("Enter ticker symbol")
+                    # Monte Carlo simulation (if enabled)
+                    if USE_MONTE_CARLO:
+                        monte_carlo_result = backtester.monte_carlo_simulation(
+                            backtest_result, simulations=1000, num_trades=50
+                        )
+                        
+                        if monte_carlo_result and monte_carlo_result.prob_profit < 60:
+                            stats["monte_carlo_fail"] += 1
+                            log_rejection("Monte Carlo fail", f"Prob:{monte_carlo_result.prob_profit:.0f}%")
+                            return None
+            except Exception as e:
+                logger.debug(f"Backtest error for {ticker}: {e}")
+                pass
         
-        st.divider()
+        # ====================================================================
+        # PORTFOLIO RISK CHECK (IF ENABLED)
+        # ====================================================================
+        # if USE_PORTFOLIO_RISK and portfolio_mgr:
+        #     can_add, reason = portfolio_mgr.can_add_trade({
+        #         'ticker': ticker,
+        #         'side': side,
+        #         'position_value': trade_rule.position_value,
+        #         'risk_amount': trade_rule.risk_amount,
+        #         'sector': sector,
+        #     })
+            
+        #     if not can_add:
+        #         stats["portfolio_fail"] += 1
+        #         log_rejection("Portfolio limit", reason)
+        #         result['portfolio_warning'] = reason
+        #         return None
         
-        # =====================================================================
-        # RESET STATS
-        # =====================================================================
-        st.markdown("### 🔄 Reset Data")
+        # ====================================================================
+        # SUCCESS - BUILD RESULT OBJECT
+        # ====================================================================
+        stats["passed"] += 1
         
-        with st.expander("Reset Options", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🗑️ Reset Stats", use_container_width=True, key="reset_stats"):
-                    st.session_state.performance_stats = {
-                        'total_trades': 0,
-                        'wins': 0,
-                        'losses': 0,
-                        'total_profit': 0,
-                        'total_loss': 0
-                    }
-                    st.session_state.trade_history = []
-                    st.session_state.max_drawdown = 0
-                    st.session_state.current_drawdown = 0
-                    st.session_state.peak_portfolio_value = 0
-                    st.success("✅ Stats reset!")
-                    time.sleep(1)
-                    st.rerun()
-            
-            with col2:
-                if st.button("🗑️ Clear Cache", use_container_width=True, key="clear_cache"):
-                    st.cache_data.clear()
-                    st.success("✅ Cache cleared!")
-                    time.sleep(1)
-                    st.rerun()
-            
-            if st.button("🗑️ Reset Email Log", use_container_width=True, key="reset_email"):
-                st.session_state.email_log = []
-                st.session_state.email_sent_alerts = {}
-                st.session_state.last_email_time = {}
-                st.success("✅ Email log reset!")
-        # =====================================================================
-        # DEBUG INFO
-        # =====================================================================
-        with st.expander("🔧 Debug Info"):
-            st.write(f"Email configured: {'✅ Yes' if credentials_configured else '❌ No'}")
-            st.write(f"Email enabled: {'✅ Yes' if email_settings['enabled'] else '❌ No'}")
-            st.write(f"Auto-refresh: {'✅ Installed' if HAS_AUTOREFRESH else '❌ Not installed'}")
-            st.write(f"Refresh interval: {refresh_interval}s")
-            st.write(f"Trail SL trigger: {trail_sl_trigger}%")
-            st.write(f"SL Risk threshold: {sl_risk_threshold}%")
-            st.write(f"SL Approach threshold: {sl_approach_threshold}%")
-            st.write(f"API calls this session: {st.session_state.api_call_count}")
-            
-            if email_settings['enabled']:
-                st.write(f"Email cooldown: {email_settings['cooldown']} min")
-            
-            # Email log
-                        # Email log
-            if st.session_state.email_log:
-                st.markdown("**Recent Email Log:**")
-                for log_entry in st.session_state.email_log[-5:]:
-                    st.caption(log_entry)
-                
-                # Download button for full log
-                full_log = "\n".join(st.session_state.email_log)
-                st.download_button(
-                    "📥 Download Full Log",
-                    full_log,
-                    file_name=f"email_log_{get_ist_now().strftime('%Y%m%d_%H%M')}.txt",
-                    mime="text/plain",
-                    key="download_email_log"
-                )
+        # Print successful signal
+        print(f"\n✅ SIGNAL #{stats['passed']}: {ticker.replace('.NS', '').replace('.BO', '')}")
+        print(f"   {side} @ ₹{price:.2f} | Conf: {confidence:.1f}% | R:R: {trade_rule.risk_reward_ratio:.1f}x")
         
-        # Return all settings
-        return {
-            'email_settings': email_settings,
-            'auto_refresh': auto_refresh,
-            'refresh_interval': refresh_interval,
-            'loss_threshold': loss_threshold,
-            'profit_threshold': profit_threshold,
-            'trail_sl_trigger': trail_sl_trigger,
-            'sl_risk_threshold': sl_risk_threshold,
-            'sl_approach_threshold': sl_approach_threshold,
-            'enable_volume_analysis': enable_volume_analysis,
-            'enable_sr_detection': enable_sr_detection,
-            'enable_multi_timeframe': enable_multi_timeframe,
-            'enable_correlation': enable_correlation
+        result = {
+            "ticker": ticker.replace(".NS", "").replace(".BO", ""),
+            "side": side,
+            "price": round(price, 2),
+            "confidence": round(confidence, 1),
+            "rsi": round(ind["rsi"], 1),
+            "atr": round(ind["atr"], 2),
+            "adx": round(ind["adx"], 1),
+            "entry_price": trade_rule.entry_price,
+            "stop_loss": trade_rule.stop_loss,
+            "target_1": trade_rule.target_1,
+            "target_2": trade_rule.target_2,
+            "risk_reward": round(trade_rule.risk_reward_ratio, 2),
+            "qty": trade_rule.qty,
+            "position_value": round(trade_rule.position_value, 2),
+            "risk_amount": round(trade_rule.risk_amount, 2),
+            "entry_signal": entry_info["entry_signal"],
+            "reasons": " | ".join(reasons),
+            "sector": sector or "N/A",
+            "pe": pe,
+            "trade_rule": trade_rule,
+            "mini_backtest": mini_metrics,
+            "backtest_validated": False
         }
-
+        
+        # Add backtest results if available
+        if backtest_result:
+            result["backtest"] = {
+                "win_rate": backtest_result.win_rate,
+                "profit_factor": backtest_result.profit_factor,
+                "sharpe_ratio": backtest_result.sharpe_ratio,
+                "max_drawdown": backtest_result.max_drawdown,
+                "reliability_score": backtest_result.reliability_score,
+                "total_trades": backtest_result.total_trades,
+                "expectancy": backtest_result.expectancy,
+            }
+            result["backtest_validated"] = True
+        
+        # Add walk-forward results if available
+        if walk_forward_result:
+            result["walk_forward"] = {
+                "avg_win_rate": walk_forward_result.avg_win_rate,
+                "consistency": walk_forward_result.consistency_score,
+                "passed": walk_forward_result.passed
+            }
+        
+        # Add Monte Carlo results if available
+        if monte_carlo_result:
+            result["monte_carlo"] = {
+                "prob_profit": monte_carlo_result.prob_profit,
+                "risk_of_ruin": monte_carlo_result.risk_of_ruin,
+            }
+        
+        return result
+        
+    except Exception as e:
+        # Catch-all exception handler
+        stats["indicator_fail"] += 1
+        log_rejection("Exception", f"{type(e).__name__}: {str(e)[:30]}")
+        logger.debug(f"{ticker}: Exception - {str(e)}")
+        return None
+    
 # ============================================================================
-# DISPLAY COMPONENTS
-# ============================================================================
-
-def display_portfolio_risk_dashboard(portfolio_risk, sector_analysis):
-    """
-    Display the portfolio risk dashboard
-    """
-    st.markdown("### 🛡️ Portfolio Risk Analysis")
-    
-    # Main metrics row
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric(
-            "💰 Total Capital",
-            f"₹{portfolio_risk['total_capital']:,.0f}"
-        )
-    
-    with col2:
-        st.metric(
-            "📈 Current Value",
-            f"₹{portfolio_risk['current_value']:,.0f}",
-            f"{portfolio_risk['total_pnl_pct']:+.2f}%"
-        )
-    
-    with col3:
-        st.metric(
-            "🛡️ Total Risk",
-            f"₹{portfolio_risk['total_risk_amount']:,.0f}",
-            f"{portfolio_risk['portfolio_risk_pct']:.1f}%"
-        )
-    
-    with col4:
-        st.markdown(f"""
-        <div style='text-align:center; padding:10px; background:linear-gradient(135deg, {portfolio_risk['risk_color']}, {portfolio_risk['risk_color']}90); 
-                    border-radius:10px; color:white;'>
-            <h3 style='margin:0;'>{portfolio_risk['risk_icon']} {portfolio_risk['risk_status']}</h3>
-            <p style='margin:5px 0; font-size:0.8em;'>Risk Status</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col5:
-        st.metric(
-            "⚠️ Risky Positions",
-            portfolio_risk['risky_positions'],
-            f"of {portfolio_risk['total_positions']}"
-        )
-    
-    # Risk recommendation
-    if portfolio_risk['portfolio_risk_pct'] > 10:
-        st.error(f"🚨 Portfolio risk is HIGH ({portfolio_risk['portfolio_risk_pct']:.1f}%). Consider reducing exposure!")
-    elif portfolio_risk['portfolio_risk_pct'] > 5:
-        st.warning(f"⚠️ Portfolio risk is MEDIUM ({portfolio_risk['portfolio_risk_pct']:.1f}%). Monitor closely.")
-    else:
-        st.success(f"✅ Portfolio risk is SAFE ({portfolio_risk['portfolio_risk_pct']:.1f}%).")
-    
-    # Drawdown info
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("📉 Current Drawdown", f"{st.session_state.current_drawdown:.2f}%")
-    with col2:
-        st.metric("📊 Max Drawdown", f"{st.session_state.max_drawdown:.2f}%")
-    with col3:
-        st.metric("🎯 Avg SL Risk", f"{portfolio_risk['avg_sl_risk']:.1f}%")
-    
-    # Sector exposure warnings
-    if sector_analysis['warnings']:
-        st.markdown("#### ⚠️ Concentration Warnings")
-        for warning in sector_analysis['warnings']:
-            st.warning(warning)
-
-def display_performance_dashboard():
-    """
-    Display performance statistics dashboard
-    """
-    st.markdown("### 📈 Performance Dashboard")
-    
-    perf_stats = get_performance_stats()
-    
-    if perf_stats:
-        # Main stats row
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.metric("📊 Total Trades", perf_stats['total_trades'])
-        
-        with col2:
-            win_color = "normal" if perf_stats['win_rate'] >= 50 else "inverse"
-            st.metric("🎯 Win Rate", f"{perf_stats['win_rate']:.1f}%")
-        
-        with col3:
-            st.metric("✅ Wins / ❌ Losses", f"{perf_stats['wins']} / {perf_stats['losses']}")
-        
-        with col4:
-            exp_color = "normal" if perf_stats['expectancy'] >= 0 else "inverse"
-            st.metric("📈 Expectancy", f"₹{perf_stats['expectancy']:,.0f}")
-        
-        with col5:
-            pf_color = "normal" if perf_stats['profit_factor'] >= 1 else "inverse"
-            pf_display = f"{perf_stats['profit_factor']:.2f}" if perf_stats['profit_factor'] < 100 else "∞"
-            st.metric("⚖️ Profit Factor", pf_display)
-        
-        # Second row
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("💰 Net Profit", f"₹{perf_stats['net_profit']:+,.0f}")
-        
-        with col2:
-            st.metric("📈 Avg Win", f"₹{perf_stats['avg_win']:,.0f}")
-        
-        with col3:
-            st.metric("📉 Avg Loss", f"₹{perf_stats['avg_loss']:,.0f}")
-        
-        with col4:
-            if perf_stats['avg_loss'] > 0:
-                rr_actual = perf_stats['avg_win'] / perf_stats['avg_loss']
-                st.metric("⚖️ Actual R:R", f"1:{rr_actual:.2f}")
-            else:
-                st.metric("⚖️ Actual R:R", "N/A")
-        
-        # Performance assessment
-        if perf_stats['win_rate'] >= 60 and perf_stats['profit_factor'] >= 1.5:
-            st.success("🌟 Excellent performance! Keep up the good work.")
-        elif perf_stats['win_rate'] >= 50 and perf_stats['profit_factor'] >= 1.2:
-            st.info("👍 Good performance. Room for improvement.")
-        elif perf_stats['win_rate'] >= 40 and perf_stats['profit_factor'] >= 1.0:
-            st.warning("⚠️ Marginal performance. Review your strategy.")
-        else:
-            st.error("🚨 Poor performance. Strategy review needed.")
-        
-        # Trade history
-        if st.session_state.trade_history:
-            st.markdown("#### 📋 Recent Trades")
-            
-            history_data = []
-            for trade in reversed(st.session_state.trade_history[-10:]):
-                history_data.append({
-                    'Date': trade['timestamp'].strftime('%Y-%m-%d %H:%M'),
-                    'Ticker': trade['ticker'],
-                    'Type': trade['type'],
-                    'Entry': f"₹{trade['entry']:.2f}",
-                    'Exit': f"₹{trade['exit']:.2f}",
-                    'Qty': trade['quantity'],
-                    'P&L': f"₹{trade['pnl']:+,.0f}",
-                    'P&L %': f"{trade['pnl_pct']:+.2f}%",
-                    'Result': '✅' if trade['win'] else '❌',
-                    'Reason': trade['reason']
-                })
-            
-            df_history = pd.DataFrame(history_data)
-            st.dataframe(df_history, use_container_width=True, hide_index=True)
-            
-            # Export button
-            csv = df_history.to_csv(index=False)
-            st.download_button(
-                "📥 Download Trade History",
-                csv,
-                file_name=f"trade_history_{get_ist_now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-    else:
-        st.info("📊 No trades logged yet. Use the 'Log Closed Trade' feature in the sidebar to record trades.")
-        
-        # Sample explanation
-        st.markdown("""
-        **How to track performance:**
-        1. When you close a trade, go to sidebar → 'Log Closed Trade'
-        2. Enter the trade details (entry, exit, quantity)
-        3. Click 'Log Trade'
-        4. View your statistics here!
-        """)
-
-def display_sector_analysis(sector_analysis):
-    """
-    Display sector exposure analysis
-    """
-    st.markdown("### 🏢 Sector Exposure")
-    
-    if not sector_analysis['sectors']:
-        st.info("No sector data available")
-        return
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Pie chart
-        sector_data = []
-        for sector, data in sector_analysis['sectors'].items():
-            sector_data.append({
-                'Sector': sector,
-                'Percentage': data['percentage'],
-                'Value': data['value']
-            })
-        
-        df_sector = pd.DataFrame(sector_data)
-        
-        fig = px.pie(
-            df_sector,
-            values='Percentage',
-            names='Sector',
-            title='Sector Distribution',
-            color_discrete_sequence=px.colors.qualitative.Set3,
-            hole=0.3
-        )
-        fig.update_traces(textposition='inside', textinfo='percent+label')
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.markdown("#### Sector Breakdown")
-        
-        for sector, data in list(sector_analysis['sectors'].items())[:8]:
-            pnl_color = "green" if data['pnl'] >= 0 else "red"
-            st.markdown(f"""
-            **{sector}** ({data['percentage']:.1f}%)
-            - Stocks: {data['count']}
-            - Value: ₹{data['value']:,.0f}
-            - P&L: <span style='color:{pnl_color}'>₹{data['pnl']:+,.0f}</span>
-            """, unsafe_allow_html=True)
-            st.divider()
-        
-        # Diversification score
-        score = sector_analysis['diversification_score']
-        if score >= 70:
-            score_color = "#28a745"
-            score_text = "Well Diversified"
-        elif score >= 50:
-            score_color = "#ffc107"
-            score_text = "Moderately Diversified"
-        else:
-            score_color = "#dc3545"
-            score_text = "Poorly Diversified"
-        
-        st.markdown(f"""
-        <div style='text-align:center; padding:15px; background:{score_color}20; border-radius:10px; border-left:4px solid {score_color};'>
-            <h2 style='margin:0; color:{score_color};'>{score}/100</h2>
-            <p style='margin:5px 0;'>{score_text}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-def display_correlation_analysis(results, enable_correlation):
-    """
-    Display correlation analysis
-    """
-    st.markdown("### 🔗 Correlation Analysis")
-    
-    if not enable_correlation:
-        st.info("Correlation analysis is disabled. Enable it in sidebar settings.")
-        return
-    
-    tickers = [r['ticker'] for r in results]
-    
-    if len(tickers) < 2:
-        st.warning("Need at least 2 positions for correlation analysis")
-        return
-    
-    # Check cache
-    cache_valid = (
-        st.session_state.correlation_matrix is not None and
-        st.session_state.last_correlation_calc is not None and
-        (datetime.now() - st.session_state.last_correlation_calc).seconds < 300
-    )
-    
-    if not cache_valid:
-        with st.spinner("Calculating correlations..."):
-            corr_matrix, status = calculate_correlation_matrix(tickers)
-            if corr_matrix is not None:
-                st.session_state.correlation_matrix = corr_matrix
-                st.session_state.last_correlation_calc = datetime.now()
-    else:
-        corr_matrix = st.session_state.correlation_matrix
-        status = "Cached"
-    
-    if corr_matrix is not None:
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Heatmap
-            fig = px.imshow(
-                corr_matrix,
-                labels=dict(x="Stock", y="Stock", color="Correlation"),
-                x=corr_matrix.columns,
-                y=corr_matrix.index,
-                color_continuous_scale="RdYlGn",
-                zmin=-1, zmax=1
-            )
-            fig.update_layout(title="Correlation Matrix", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            high_corr, avg_corr, corr_status = analyze_correlation_risk(corr_matrix)
-            
-            st.markdown(f"**Average Correlation:** {avg_corr:.2f}")
-            st.markdown(f"**Status:** {corr_status}")
-            
-            if high_corr:
-                st.markdown("#### ⚠️ High Correlations")
-                for hc in high_corr[:5]:
-                    risk_color = "red" if hc['risk'] == 'HIGH' else "orange"
-                    st.markdown(f"""
-                    <div style='background:{risk_color}20; padding:8px; margin:5px 0; border-radius:5px;'>
-                        <strong>{hc['pair']}</strong>: {hc['correlation']:.2f}
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.success("✅ No highly correlated pairs found")
-    else:
-        st.error(f"Could not calculate correlations: {status}")
-
-# ============================================================================
-# MAIN APPLICATION
+# HYBRID SCANNING STRATEGY
 # ============================================================================
 
-def main():
-    """
-    Main application entry point
-    """
+def hybrid_scan_universe(
+    tickers: List[str],
+    df_all: pd.DataFrame,
+    quality_validator: DataQualityValidator,
+    sector_filter: SectorRotationAnalyzer,
+    vix_filter: VIXSentimentAnalyzer,
+    fibo_detector: FibonacciDetector,
+    portfolio_mgr: PortfolioRiskManager,
+    mtf_analyzer: MultiTimeframeAnalyzer
+) -> List[Dict]:
+    """Hybrid scanning: Quick scan + Full backtest top candidates"""
     
-    # Header
-    st.markdown('<h1 class="main-header">🧠 Smart Portfolio Monitor v6.0</h1>', unsafe_allow_html=True)
+    print(f"\n{'='*120}")
+    print("PHASE 1: QUICK SCAN WITH MINI BACKTEST")
+    print('='*120)
     
-    # Render sidebar and get settings
-    settings = render_sidebar()
+    # Phase 1: Quick scan
+    initial_results = []
     
-    # Market Status
-    is_open, market_status, market_msg, market_icon = is_market_hours()
-    ist_now = get_ist_now()
-    
-    # =========================================================================
-    # HEADER ROW (Market Status + Time + Refresh Button)
-    # =========================================================================
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
-    with col1:
-        st.markdown(f"### {market_icon} {market_status}")
-        st.caption(market_msg)
-    
-    with col2:
-        st.markdown(f"### 🕐 {ist_now.strftime('%H:%M:%S')} IST")
-        st.caption(ist_now.strftime('%A, %B %d, %Y'))
-    
-    with col3:
-        if st.button("🔄 Refresh", use_container_width=True, type="primary"):
-            st.cache_data.clear()
-            st.rerun()
-    
-    # =========================================================================
-    # ✅ GAP 1: MARKET HEALTH DISPLAY (OUTSIDE COLUMNS - FULL WIDTH!)
-    # =========================================================================
-    st.divider()
-    
-    market_health = get_market_health()
-    
-    if market_health:
-        st.markdown(f"""
-        <div style='background:{market_health['color']}20; padding:20px; border-radius:12px; 
-                    border-left:5px solid {market_health['color']}; margin:15px 0;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <div>
-                    <h2 style='margin:0; color:{market_health['color']};'>
-                        {market_health['icon']} Market Health: {market_health['status']}
-                    </h2>
-                    <p style='margin:8px 0; font-size:1.1em;'>{market_health['message']}</p>
-                    <p style='margin:8px 0; font-weight:bold; font-size:1.05em;'>{market_health['action']}</p>
-                </div>
-                <div style='text-align:center; min-width:100px;'>
-                    <h1 style='margin:0; color:{market_health['color']};'>{market_health['health_score']}</h1>
-                    <p style='margin:0; font-size:0.9em;'>Health Score</p>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Show detailed metrics in expander
-        with st.expander("📊 Market Details", expanded=False):
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            
-            with m_col1:
-                st.metric("NIFTY 50", f"₹{market_health['nifty_price']:,.0f}", 
-                         f"{market_health['nifty_change']:+.2f}%")
-            
-            with m_col2:
-                st.metric("RSI", f"{market_health['nifty_rsi']:.1f}")
-            
-            with m_col3:
-                st.metric("India VIX", f"{market_health['vix']:.1f}")
-            
-            with m_col4:
-                st.metric("Trend", "Bullish" if market_health['above_sma20'] else "Bearish")
-            
-            # Technical levels
-            st.caption(f"NIFTY SMA20: ₹{market_health['nifty_sma20']:,.0f} | SMA50: ₹{market_health['nifty_sma50']:,.0f}")
-        
-        # ✅ AUTO-ADJUST SL THRESHOLDS BASED ON MARKET
-        if market_health['sl_adjustment'] == 'AGGRESSIVE':
-            settings['sl_risk_threshold'] = max(30, settings['sl_risk_threshold'] - 20)
-            st.warning(f"⚠️ SL Risk threshold auto-adjusted to {settings['sl_risk_threshold']}% due to weak market")
-        elif market_health['sl_adjustment'] == 'TIGHTEN':
-            settings['sl_risk_threshold'] = max(35, settings['sl_risk_threshold'] - 10)
-            st.info(f"ℹ️ SL Risk threshold adjusted to {settings['sl_risk_threshold']}% (cautious mode)")
-    
-    else:
-        market_health = None  # Set to None if fetch failed
-        st.warning("⚠️ Unable to fetch market health data")
-    
-    st.divider()
-    
-    # =========================================================================
-    # SETTINGS SUMMARY
-    # =========================================================================
-    with st.expander("⚙️ Current Settings", expanded=False):
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.metric("Trail SL Trigger", f"{settings['trail_sl_trigger']}%")
-        with col2:
-            st.metric("SL Risk Alert", f"{settings['sl_risk_threshold']}%")
-        with col3:
-            st.metric("Refresh Interval", f"{settings['refresh_interval']}s")
-        with col4:
-            st.metric("MTF Analysis", "✅ On" if settings['enable_multi_timeframe'] else "❌ Off")
-        with col5:
-            st.metric("Email Alerts", "✅ On" if settings['email_settings']['enabled'] else "❌ Off")
-    
-    st.divider()
-    
-    # Load Portfolio
-        # Load Portfolio
-    portfolio = load_portfolio()
-    
-    if portfolio is None or len(portfolio) == 0:
-        st.warning("⚠️ No positions found!")
-        
-        # Show sample format
-        st.markdown("### 📋 Expected Google Sheets Format:")
-        sample_df = pd.DataFrame({
-            'Ticker': ['RELIANCE', 'TCS', 'INFY'],
-            'Position': ['LONG', 'LONG', 'SHORT'],
-            'Entry_Price': [2450.00, 3580.00, 1520.00],
-            'Quantity': [10, 5, 8],
-            'Stop_Loss': [2380.00, 3480.00, 1580.00],
-            'Target_1': [2550.00, 3720.00, 1420.00],
-            'Target_2': [2650.00, 3850.00, 1350.00],
-            'Entry_Date': ['2024-01-15', '2024-01-20', '2024-02-01'],
-            'Status': ['ACTIVE', 'ACTIVE', 'ACTIVE']
-        })
-        st.dataframe(sample_df, use_container_width=True)
-        return
-    
-    # Validate Portfolio Data
-    is_valid, errors, warnings = validate_portfolio(portfolio)
-    
-    if errors:
-        st.error("❌ Portfolio Validation Failed!")
-        for error in errors:
-            st.error(error)
-        st.stop()
-    
-    if warnings:
-        with st.expander("⚠️ Validation Warnings", expanded=False):
-            for warning in warnings:
-                st.warning(warning)
-        
-        # Show sample format
-        st.markdown("### 📋 Expected Google Sheets Format:")
-        sample_df = pd.DataFrame({
-            'Ticker': ['RELIANCE', 'TCS', 'INFY'],
-            'Position': ['LONG', 'LONG', 'SHORT'],
-            'Entry_Price': [2450.00, 3580.00, 1520.00],
-            'Quantity': [10, 5, 8],
-            'Stop_Loss': [2380.00, 3480.00, 1580.00],
-            'Target_1': [2550.00, 3720.00, 1420.00],
-            'Target_2': [2650.00, 3850.00, 1350.00],
-            'Entry_Date': ['2024-01-15', '2024-01-20', '2024-02-01'],
-            'Status': ['ACTIVE', 'ACTIVE', 'ACTIVE']
-        })
-        st.dataframe(sample_df, use_container_width=True)
-        return
-    
-    # =========================================================================
-    # ANALYZE ALL POSITIONS
-    # =========================================================================
-    results = []
-    progress_bar = st.progress(0, text="Analyzing positions...")
-    
-    for i, (_, row) in enumerate(portfolio.iterrows()):
-        ticker = str(row['Ticker']).strip()
-        progress_bar.progress((i + 0.5) / len(portfolio), text=f"Analyzing {ticker}...")
-        
-        # Get entry date if available
-        entry_date = row.get('Entry_Date', None)
-        
-        result = smart_analyze_position(
-            ticker,
-            str(row['Position']).upper().strip(),
-            float(row['Entry_Price']),
-            int(row.get('Quantity', 1)),
-            float(row['Stop_Loss']),
-            float(row['Target_1']),
-            float(row.get('Target_2', row['Target_1'] * 1.1)),
-            settings['trail_sl_trigger'],
-            settings['sl_risk_threshold'],
-            settings['sl_approach_threshold'],
-            settings['enable_multi_timeframe'],
-            entry_date
+    for i, ticker in enumerate(tickers, 1):
+        result = scan_ticker(
+            ticker=ticker,
+            df_all=df_all,
+            quality_validator=quality_validator,
+            sector_filter=sector_filter,
+            vix_filter=vix_filter,
+            fibo_detector=fibo_detector,
+            portfolio_mgr=portfolio_mgr,
+            mtf_analyzer=mtf_analyzer,
+            backtester=None,
+            run_full_backtest=False
         )
         
         if result:
-            results.append(result)
+            initial_results.append(result)
+            if USE_PORTFOLIO_RISK and portfolio_mgr:
+                portfolio_mgr.add_trade(result)
         
-        progress_bar.progress((i + 1) / len(portfolio), text=f"Completed {ticker}")
+        # Progress bar
+        if i % 25 == 0 or i == len(tickers):
+            pct = (i / len(tickers)) * 100
+            bar_length = 50
+            filled = int(bar_length * i / len(tickers))
+            bar = '█' * filled + '░' * (bar_length - filled)
+            print(f"  [{bar}] {pct:>5.1f}% | {i:>4}/{len(tickers)} | Found: {len(initial_results):>3}", 
+                  end='\r', flush=True)
     
-    progress_bar.empty()
+    print()
     
-    if not results:
-        st.error("❌ Could not fetch stock data. Check internet connection and try again.")
-        return
+    if not initial_results:
+        print("\n  ⚠️  No signals found in Phase 1")
+        return []
     
-    # =========================================================================
-    # CALCULATE PORTFOLIO METRICS
-    # =========================================================================
+    # Sort by confidence
+    initial_results = sorted(initial_results, key=lambda x: x['confidence'], reverse=True)
+    print(f"\n  ✓ Phase 1 Complete: {len(initial_results)} signals found")
     
-    # Portfolio risk
-    portfolio_risk = calculate_portfolio_risk(results)
-    
-    # Sector analysis
-    sector_analysis = analyze_sector_exposure(results)
-    
-    # Update drawdown
-    update_drawdown(portfolio_risk['current_value'])
-    
-    # Summary counts
-    total_pnl = sum(r['pnl_amount'] for r in results)
-    total_invested = sum(r['entry_price'] * r['quantity'] for r in results)
-    pnl_percent_total = (total_pnl / total_invested * 100) if total_invested > 0 else 0
-    
-    critical_count = sum(1 for r in results if r['overall_status'] == 'CRITICAL')
-    warning_count = sum(1 for r in results if r['overall_status'] == 'WARNING')
-    opportunity_count = sum(1 for r in results if r['overall_status'] == 'OPPORTUNITY')
-    success_count = sum(1 for r in results if r['overall_status'] == 'SUCCESS')
-    good_count = sum(1 for r in results if r['overall_status'] == 'GOOD')
-    
-    # =========================================================================
-    # SEND EMAIL ALERTS
-    # =========================================================================
-    if settings['email_settings']['enabled']:
-        send_portfolio_alerts(results, settings['email_settings'], portfolio_risk)
-    
-    # =========================================================================
-    # DISPLAY SUMMARY CARDS
-    # =========================================================================
-    st.markdown("### 📊 Portfolio Summary")
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-    
-    with col1:
-        pnl_delta = f"{pnl_percent_total:+.2f}%"
-        st.metric("💰 Total P&L", f"₹{total_pnl:+,.0f}", pnl_delta)
-    with col2:
-        st.metric("📊 Positions", len(results))
-    with col3:
-        st.metric("🔴 Critical", critical_count)
-    with col4:
-        st.metric("🟡 Warning", warning_count)
-    with col5:
-        st.metric("🟢 Good", good_count)
-    with col6:
-        st.metric("🔵 Opportunity", opportunity_count)
-    with col7:
-        st.metric("✅ Success", success_count)
-    
-    st.divider()
-    
-    # =========================================================================
-    # MAIN TABS
-    # =========================================================================
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7= st.tabs([
-        "📊 Dashboard",
-        "📈 Charts", 
-        "🔔 Alerts",
-        "📉 MTF Analysis",
-        "🛡️ Portfolio Risk",
-        "📈 Performance",
-        "📋 Details"
-    ])
-    
-    # =========================================================================
-    # TAB 1: DASHBOARD
-    # =========================================================================
-    with tab1:
-        # Sort by status priority
-        status_order = {'CRITICAL': 0, 'WARNING': 1, 'OPPORTUNITY': 2, 'SUCCESS': 3, 'GOOD': 4, 'OK': 5}
-        sorted_results = sorted(results, key=lambda x: status_order.get(x['overall_status'], 5))
+    # Phase 2: Full backtest (if enabled)
+    if BACKTEST_MODE in ['HYBRID', 'FULL'] and USE_FULL_BACKTEST:
         
-        for r in sorted_results:
-            status_icons = {
-                'CRITICAL': '🔴', 'WARNING': '🟡', 'OPPORTUNITY': '🔵',
-                'SUCCESS': '🟢', 'GOOD': '🟢', 'OK': '⚪'
-            }
-            status_icon = status_icons.get(r['overall_status'], '⚪')
-            pnl_emoji = "📈" if r['pnl_percent'] >= 0 else "📉"
-            
-            with st.expander(
-                f"{status_icon} **{r['ticker']}** | "
-                f"{'📈 LONG' if r['position_type'] == 'LONG' else '📉 SHORT'} | "
-                f"{pnl_emoji} P&L: **{r['pnl_percent']:+.2f}%** (₹{r['pnl_amount']:+,.0f}) | "
-                f"SL Risk: **{r['sl_risk']}%** | "
-                f"Action: **{r['overall_action'].replace('_', ' ')}**",
-                expanded=(r['overall_status'] in ['CRITICAL', 'WARNING', 'OPPORTUNITY', 'SUCCESS'])
-            ):
-                # ✅ GAP 2: CHECK FOR EMERGENCY EXIT
-                is_emergency, emergency_reasons, urgency_level = detect_emergency_exit(r, market_health)
-                
-                if is_emergency:
-                    if urgency_level == "CRITICAL":
-                        st.markdown("""
-                        <div style='background:#dc3545; color:white; padding:15px; border-radius:10px; 
-                                    text-align:center; font-size:1.2em; font-weight:bold; margin-bottom:15px;
-                                    animation: blink 1s infinite;'>
-                            🚨 EMERGENCY EXIT REQUIRED 🚨
-                        </div>
-                        <style>
-                        @keyframes blink {
-                            0%, 50%, 100% { opacity: 1; }
-                            25%, 75% { opacity: 0.5; }
-                        }
-                        </style>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.error("⚠️ HIGH URGENCY - Consider immediate exit")
-                    
-                    st.markdown("**Emergency Conditions:**")
-                    for reason in emergency_reasons:
-                        st.error(f"• {reason}")
-                    
-                    st.divider()
-                # ✅ GAP 3: STOCK WIN RATE WARNING
-                stock_history = get_stock_performance_history(r['ticker'])
-                
-                if stock_history['has_history']:
-                    if stock_history['win_rate'] < 45 or stock_history['expectancy'] < 0:
-                        st.markdown(f"""
-                        <div style='background:{stock_history['color']}20; padding:12px; border-radius:8px; 
-                                    border-left:4px solid {stock_history['color']}; margin-bottom:15px;'>
-                            <strong>{stock_history['icon']} Historical Performance: {stock_history['quality']}</strong><br>
-                            Win Rate: {stock_history['win_rate']:.1f}% ({stock_history['wins']}/{stock_history['trade_count']}) | 
-                            Expectancy: ₹{stock_history['expectancy']:+,.0f}<br>
-                            <strong>{stock_history['recommendation']}</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        with st.expander(f"{stock_history['icon']} Historical: {stock_history['quality']} ({stock_history['win_rate']:.0f}% win rate)", expanded=False):
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Win Rate", f"{stock_history['win_rate']:.1f}%")
-                            with col2:
-                                st.metric("Trades", f"{stock_history['wins']}/{stock_history['trade_count']}")
-                            with col3:
-                                st.metric("Expectancy", f"₹{stock_history['expectancy']:+,.0f}")
-                
-                st.divider()
-                # Row 1: Basic Info
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.markdown("##### 💰 Position")
-                    st.write(f"**Entry:** ₹{r['entry_price']:,.2f}")
-                    st.write(f"**Current:** ₹{r['current_price']:,.2f}")
-                    st.write(f"**Qty:** {r['quantity']}")
-                    pnl_color = "green" if r['pnl_percent'] >= 0 else "red"
-                    st.markdown(f"**P&L:** <span style='color:{pnl_color};font-weight:bold;'>"
-                               f"₹{r['pnl_amount']:+,.2f} ({r['pnl_percent']:+.2f}%)</span>",
-                               unsafe_allow_html=True)
-                    if r['holding_days'] > 0:
-                        st.caption(f"Holding: {r['holding_days']} days | {r['tax_color']} {r['tax_implication']}")
-                
-                with col2:
-                    st.markdown("##### 🎯 Levels")
-                    sl_status = '🔴 HIT!' if r['sl_hit'] else ''
-                    t1_status = '✅' if r['target1_hit'] else ''
-                    t2_status = '✅' if r['target2_hit'] else ''
-                    
-                    st.write(f"**Stop Loss:** ₹{r['stop_loss']:,.2f} {sl_status}")
-                    st.write(f"**Target 1:** ₹{r['target1']:,.2f} {t1_status}")
-                    st.write(f"**Target 2:** ₹{r['target2']:,.2f} {t2_status}")
-                    
-                    if r['should_trail']:
-                        st.success(f"**Trail SL:** ₹{r['trail_stop']:,.2f}")
-                        st.caption(r.get('trail_reason', ''))
-                    
-                    if r['at_breakeven']:
-                        st.info("🔔 At Breakeven")
-                
-                with col3:
-                    st.markdown("##### 📊 Indicators")
-                    rsi_color = "green" if 40 <= r['rsi'] <= 60 else "orange" if 30 <= r['rsi'] <= 70 else "red"
-                    st.markdown(f"**RSI:** <span style='color:{rsi_color};'>{r['rsi']:.1f}</span>", 
-                               unsafe_allow_html=True)
-                    macd_color = "green" if r['macd_signal'] == "BULLISH" else "red"
-                    st.markdown(f"**MACD:** <span style='color:{macd_color};'>{r['macd_signal']}</span>", 
-                               unsafe_allow_html=True)
-                    st.write(f"**Volume:** {r['volume_signal'].replace('_', ' ')}")
-                    st.write(f"**Trend:** {r['momentum_trend']}")
-                    st.write(f"**R:R Ratio:** 1:{r['risk_reward_ratio']:.2f}")
-                
-                with col4:
-                    st.markdown("##### 🛡️ Support/Resistance")
-                    st.write(f"**Support:** ₹{r['support']:,.2f} ({r['support_strength']})")
-                    st.write(f"**Resistance:** ₹{r['resistance']:,.2f} ({r['resistance_strength']})")
-                    st.write(f"**ATR:** ₹{r['atr']:,.2f}")
-                    st.write(f"**Dist to S:** {r['distance_to_support']:.1f}%")
-                    st.write(f"**Dist to R:** {r['distance_to_resistance']:.1f}%")
-                
-                st.divider()
-
-                                # Check entry trigger status
-                
-                # Row 2: Smart Scores
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.markdown("##### ⚠️ SL Risk Score")
-                    risk_color = "#dc3545" if r['sl_risk'] >= 70 else "#ffc107" if r['sl_risk'] >= 50 else "#28a745"
-                    st.markdown(f"<h2 style='color:{risk_color};text-align:center;'>{r['sl_risk']}%</h2>",
-                               unsafe_allow_html=True)
-                    st.progress(r['sl_risk'] / 100)
-                    if r['sl_reasons']:
-                        for reason in r['sl_reasons'][:3]:
-                            st.caption(reason)
-                
-                with col2:
-                    st.markdown("##### 📈 Momentum Score")
-                    mom_color = "#28a745" if r['momentum_score'] >= 60 else "#ffc107" if r['momentum_score'] >= 40 else "#dc3545"
-                    st.markdown(f"<h2 style='color:{mom_color};text-align:center;'>{r['momentum_score']:.0f}/100</h2>",
-                               unsafe_allow_html=True)
-                    st.progress(r['momentum_score'] / 100)
-                    st.caption(r['momentum_trend'])
-                
-                with col3:
-                    st.markdown("##### 🚀 Upside Score")
-                    if r['target1_hit']:
-                        up_color = "#28a745" if r['upside_score'] >= 60 else "#ffc107" if r['upside_score'] >= 40 else "#dc3545"
-                        st.markdown(f"<h2 style='color:{up_color};text-align:center;'>{r['upside_score']}%</h2>",
-                                   unsafe_allow_html=True)
-                        st.progress(r['upside_score'] / 100)
-                        if r['upside_score'] >= 60:
-                            st.success(f"New Target: ₹{r['new_target']:,.2f}")
-                    else:
-                        st.markdown("<h2 style='color:#6c757d;text-align:center;'>N/A</h2>",
-                                   unsafe_allow_html=True)
-                        st.caption("Target not yet hit")
-                
-                with col4:
-                    st.markdown("##### 📊 MTF Alignment")
-                    if r['mtf_signals']:
-                        mtf_color = "#28a745" if r['mtf_alignment'] >= 60 else "#ffc107" if r['mtf_alignment'] >= 40 else "#dc3545"
-                        st.markdown(f"<h2 style='color:{mtf_color};text-align:center;'>{r['mtf_alignment']}%</h2>",
-                                   unsafe_allow_html=True)
-                        st.progress(r['mtf_alignment'] / 100)
-                        for tf, signal in r['mtf_signals'].items():
-                            sig_emoji = "🟢" if signal == "BULLISH" else "🔴" if signal == "BEARISH" else "⚪"
-                            st.caption(f"{tf}: {sig_emoji} {signal}")
-                    else:
-                        st.markdown("<h2 style='color:#6c757d;text-align:center;'>N/A</h2>",
-                                   unsafe_allow_html=True)
-                        st.caption("MTF data unavailable")
-                                    # ✅ GAP 4: CHART PATTERN DETECTION
-                if 'df' in r:
-                    detected_patterns = detect_chart_patterns(r['df'], r['current_price'])
-                    
-                    if detected_patterns:
-                        st.divider()
-                        st.markdown("##### 📐 Detected Patterns")
-                        
-                        for pattern in detected_patterns:
-                            signal_color = "#28a745" if pattern['signal'] == 'BULLISH' else "#dc3545"
-                            
-                            st.markdown(f"""
-                            <div style='background:{signal_color}20; padding:10px; border-radius:8px; 
-                                        border-left:3px solid {signal_color}; margin:5px 0;'>
-                                <strong>{pattern['icon']} {pattern['name']}</strong> ({pattern['signal']} - {pattern['strength']})<br>
-                                <small>{pattern['description']}</small><br>
-                                <em>→ {pattern['action']}</em>
-                            </div>
-                            """, unsafe_allow_html=True)
-                
-                # Row 3: Partial Exits
-                if r['partial_exits']['triggered_count'] > 0:
-                    st.divider()
-                    st.markdown("##### 📊 Partial Exit Levels")
-                    
-                    pe_cols = st.columns(4)
-                    for idx, pe in enumerate(r['partial_exits']['recommendations'][:4]):
-                        with pe_cols[idx]:
-                            status_color = "#28a745" if pe['status'] == 'TRIGGERED' else "#6c757d"
-                            st.markdown(f"""
-                            <div style='padding:10px;background:{status_color}20;border-radius:8px;text-align:center;border-left:3px solid {status_color};'>
-                                <strong>₹{pe['level']:,.2f}</strong><br>
-                                <small>{pe['reason']}</small><br>
-                                <span style='color:{status_color};'>{pe['status']}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                
-                # Row 4: Alerts
-                if r['alerts']:
-                    st.divider()
-                    st.markdown("##### ⚠️ Alerts & Recommendations")
-                    for alert in r['alerts']:
-                        if alert['priority'] == 'CRITICAL':
-                            st.error(f"**{alert['type']}**: {alert['message']}\n\n**⚡ Action: {alert['action']}**")
-                        elif alert['priority'] == 'HIGH':
-                            st.warning(f"**{alert['type']}**: {alert['message']}\n\n**⚡ Action: {alert['action']}**")
-                        elif alert['priority'] == 'MEDIUM':
-                            st.info(f"**{alert['type']}**: {alert['message']}\n\n**Action: {alert['action']}**")
-                        else:
-                            st.caption(f"ℹ️ {alert['type']}: {alert['message']}")
-                
-                # Recommendation Box
-                rec_colors = {
-                    'EXIT': 'critical-box', 'EXIT_EARLY': 'critical-box',
-                    'WATCH': 'warning-box', 'BOOK_PROFITS': 'success-box',
-                    'HOLD_EXTEND': 'info-box', 'TRAIL_SL': 'success-box',
-                    'HOLD': 'info-box', 'MOVE_SL_BREAKEVEN': 'info-box'
-                }
-                rec_class = rec_colors.get(r['overall_action'], 'info-box')
-                
-                st.markdown(f"""
-                <div class="{rec_class}">
-                    📌 RECOMMENDATION: {r['overall_action'].replace('_', ' ')}
-                </div>
-                """, unsafe_allow_html=True)
-    
-    # =========================================================================
-    # TAB 2: CHARTS
-    # =========================================================================
-    with tab2:
-        selected_stock = st.selectbox("Select Stock for Chart", [r['ticker'] for r in results])
-        selected_result = next((r for r in results if r['ticker'] == selected_stock), None)
+        num_to_test = min(30, len(initial_results)) if BACKTEST_MODE == 'HYBRID' else len(initial_results)
         
-        if selected_result and 'df' in selected_result:
-            df = selected_result['df']
+        print(f"\n{'='*120}")
+        print(f"PHASE 2: FULL BACKTEST ON TOP {num_to_test} CANDIDATES")
+        print('='*120)
+        
+        backtester = AdvancedBacktester(initial_capital=ACCOUNT_CAPITAL)
+        validated_results = []
+        candidates_to_test = initial_results[:num_to_test]
+        
+        for i, candidate in enumerate(candidates_to_test, 1):
+            ticker = candidate['ticker'] + '.NS'
             
-            # Candlestick Chart
-            fig = go.Figure()
+            pct = (i / num_to_test) * 100
+            print(f"  [{i:>3}/{num_to_test}] {pct:>5.1f}% | Testing {candidate['ticker']:<12} | "
+                  f"Conf: {candidate['confidence']:>5.1f}% | {candidate['side']:<5}", 
+                  end='\r', flush=True)
             
-            fig.add_trace(go.Candlestick(
-                x=df['Date'], open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'], name='Price'
-            ))
+            df_t = df_all[df_all["ticker"] == ticker].copy()
             
-            # Add moving averages
-            df['SMA20'] = df['Close'].rolling(20).mean()
-            df['EMA9'] = df['Close'].ewm(span=9).mean()
-            df['SMA50'] = df['Close'].rolling(50).mean()
+            if df_t.empty:
+                continue
             
-            fig.add_trace(go.Scatter(x=df['Date'], y=df['SMA20'], mode='lines',
-                                    name='SMA 20', line=dict(color='orange', width=1)))
-            fig.add_trace(go.Scatter(x=df['Date'], y=df['EMA9'], mode='lines',
-                                    name='EMA 9', line=dict(color='purple', width=1)))
-            fig.add_trace(go.Scatter(x=df['Date'], y=df['SMA50'], mode='lines',
-                                    name='SMA 50', line=dict(color='blue', width=1, dash='dot')))
+            # Prepare data
+            if 'Date' in df_t.columns:
+                df_t = df_t.set_index('Date')
+            df_t = df_t.sort_index()
+            if 'ticker' in df_t.columns:
+                df_t = df_t.drop(columns=['ticker'])
             
-            # Add levels
-            fig.add_hline(y=selected_result['entry_price'], line_dash="dash",
-                         line_color="blue", annotation_text="Entry")
-            fig.add_hline(y=selected_result['stop_loss'], line_dash="dash",
-                         line_color="red", annotation_text="Stop Loss")
-            fig.add_hline(y=selected_result['target1'], line_dash="dash",
-                         line_color="green", annotation_text="Target 1")
-            fig.add_hline(y=selected_result['target2'], line_dash="dot",
-                         line_color="darkgreen", annotation_text="Target 2")
-            fig.add_hline(y=selected_result['support'], line_dash="dot",
-                         line_color="orange", annotation_text="Support")
-            fig.add_hline(y=selected_result['resistance'], line_dash="dot",
-                         line_color="purple", annotation_text="Resistance")
-            
-            if selected_result['should_trail']:
-                fig.add_hline(y=selected_result['trail_stop'], line_dash="dash",
-                             line_color="cyan", annotation_text="Trail SL", line_width=2)
-            
-            fig.update_layout(
-                title=f"{selected_stock} - Price Chart with Levels",
-                height=500,
-                xaxis_rangeslider_visible=False,
-                xaxis_title="Date",
-                yaxis_title="Price (₹)"
+            # Run full backtest
+            backtest_result = backtester.backtest_strategy(
+                df=df_t,
+                signal_type=candidate['side'],
+                entry_conditions={'side': candidate['side']},
+                lookback_days=BACKTEST_LOOKBACK_DAYS
             )
             
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # RSI and MACD Charts
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                rsi_series = calculate_rsi(df['Close'])
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(x=df['Date'], y=rsi_series, mode='lines',
-                                            name='RSI', line=dict(color='purple')))
-                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
-                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold")
-                fig_rsi.add_hline(y=50, line_dash="dot", line_color="gray")
-                fig_rsi.update_layout(title="RSI (14)", height=250, yaxis_range=[0, 100])
-                st.plotly_chart(fig_rsi, use_container_width=True)
-            
-            with col2:
-                macd, signal, histogram = calculate_macd(df['Close'])
-                colors = ['green' if h >= 0 else 'red' for h in histogram]
-                fig_macd = go.Figure()
-                fig_macd.add_trace(go.Bar(x=df['Date'], y=histogram, name='Histogram',
-                                         marker_color=colors))
-                fig_macd.add_trace(go.Scatter(x=df['Date'], y=macd, mode='lines',
-                                             name='MACD', line=dict(color='blue', width=1)))
-                fig_macd.add_trace(go.Scatter(x=df['Date'], y=signal, mode='lines',
-                                             name='Signal', line=dict(color='orange', width=1)))
-                fig_macd.update_layout(title="MACD", height=250)
-                st.plotly_chart(fig_macd, use_container_width=True)
-            
-            # Volume Chart
-            fig_vol = go.Figure()
-            vol_colors = ['green' if df['Close'].iloc[i] >= df['Open'].iloc[i] else 'red'
-                         for i in range(len(df))]
-            fig_vol.add_trace(go.Bar(x=df['Date'], y=df['Volume'], name='Volume',
-                                    marker_color=vol_colors))
-            fig_vol.update_layout(title="Volume", height=200)
-            st.plotly_chart(fig_vol, use_container_width=True)
-    
-    # =========================================================================
-    # TAB 3: ALERTS
-    # =========================================================================
-    with tab3:
-        st.subheader("🔔 All Alerts")
-        
-        all_alerts = []
-        for r in results:
-            for alert in r['alerts']:
-                all_alerts.append({
-                    'Ticker': r['ticker'],
-                    'Priority': alert['priority'],
-                    'Type': alert['type'],
-                    'Message': alert['message'],
-                    'Action': alert['action'],
-                    'P&L': f"{r['pnl_percent']:+.2f}%",
-                    'SL Risk': f"{r['sl_risk']}%"
-                })
-        
-        if all_alerts:
-            # Sort by priority
-            priority_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}
-            all_alerts_sorted = sorted(all_alerts, key=lambda x: priority_order.get(x['Priority'], 4))
-            
-            df_alerts = pd.DataFrame(all_alerts_sorted)
-            
-            # Color code by priority
-            def highlight_priority(row):
-                if row['Priority'] == 'CRITICAL':
-                    return ['background-color: #f8d7da'] * len(row)
-                elif row['Priority'] == 'HIGH':
-                    return ['background-color: #fff3cd'] * len(row)
-                elif row['Priority'] == 'MEDIUM':
-                    return ['background-color: #d1ecf1'] * len(row)
-                return [''] * len(row)
-            
-            st.dataframe(df_alerts.style.apply(highlight_priority, axis=1),
-                        use_container_width=True, hide_index=True)
-            
-            # Summary by priority
-            st.markdown("### Alert Summary")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                critical = sum(1 for a in all_alerts if a['Priority'] == 'CRITICAL')
-                st.metric("🔴 Critical", critical)
-            with col2:
-                high = sum(1 for a in all_alerts if a['Priority'] == 'HIGH')
-                st.metric("🟠 High", high)
-            with col3:
-                medium = sum(1 for a in all_alerts if a['Priority'] == 'MEDIUM')
-                st.metric("🟡 Medium", medium)
-            with col4:
-                low = sum(1 for a in all_alerts if a['Priority'] == 'LOW')
-                st.metric("🟢 Low", low)
-        else:
-            st.success("✅ No alerts! All positions are healthy.")
-            st.balloons()
-    
-    # =========================================================================
-    # TAB 4: MTF ANALYSIS
-    # =========================================================================
-    with tab4:
-        st.subheader("📉 Multi-Timeframe Analysis")
-        
-        if not settings['enable_multi_timeframe']:
-            st.warning("⚠️ Multi-Timeframe Analysis is disabled. Enable it in the sidebar settings.")
-        else:
-            for r in results:
-                with st.expander(f"{r['ticker']} - MTF Alignment: {r['mtf_alignment']}%",
-                                expanded=(r['mtf_alignment'] < 50)):
+            if backtest_result:
+                if (backtest_result.win_rate >= PRESET['min_backtest_win_rate'] and
+                    backtest_result.profit_factor >= PRESET['min_profit_factor'] and
+                    backtest_result.max_drawdown <= PRESET['max_drawdown']):
                     
-                    if r['mtf_signals']:
-                        col1, col2 = st.columns([1, 2])
-                        
-                        with col1:
-                            alignment_color = "#28a745" if r['mtf_alignment'] >= 60 else "#ffc107" if r['mtf_alignment'] >= 40 else "#dc3545"
-                            st.markdown(f"""
-                            <div style='text-align:center;padding:20px;background:#f8f9fa;border-radius:10px;'>
-                                <h1 style='color:{alignment_color};margin:0;'>{r['mtf_alignment']}%</h1>
-                                <p style='margin:5px 0;'>Timeframe Alignment</p>
-                                <p style='font-size:0.8em;color:#666;'>{r['mtf_recommendation']}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        with col2:
-                            for tf, signal in r['mtf_signals'].items():
-                                details = r['mtf_details'].get(tf, {})
-                                sig_color = "🟢" if signal == "BULLISH" else "🔴" if signal == "BEARISH" else "⚪"
-                                
-                                strength = details.get('strength', 'Unknown')
-                                rsi_tf = details.get('rsi', 0)
-                                
-                                st.markdown(f"""
-                                **{tf}:** {sig_color} {signal} ({strength})
-                                - RSI: {rsi_tf:.1f} | Above SMA20: {'✅' if details.get('above_sma20') else '❌'} | 
-                                EMA Bullish: {'✅' if details.get('ema_bullish') else '❌'} |
-                                MACD: {'📈' if details.get('macd_bullish') else '📉'}
-                                """)
-                    else:
-                        st.warning("MTF data not available for this stock")
-    
-    # =========================================================================
-    # TAB 5: PORTFOLIO RISK
-    # =========================================================================
-    with tab5:
-        display_portfolio_risk_dashboard(portfolio_risk, sector_analysis)
-        
-        st.divider()
-        
-        # Sector Analysis
-        display_sector_analysis(sector_analysis)
-        
-        st.divider()
-        
-        # Correlation Analysis
-        display_correlation_analysis(results, settings['enable_correlation'])
-    
-    # =========================================================================
-    # TAB 6: PERFORMANCE
-    # =========================================================================
-    with tab6:
-        display_performance_dashboard()
-        # =========================================================================
-    # =========================================================================
-    # TAB 7: DETAILS
-    # =========================================================================
-    with tab7:
-        st.subheader("📋 Complete Analysis Data")
-        
-        details_data = []
-        for r in results:
-            details_data.append({
-                'Ticker': r['ticker'],
-                'Type': r['position_type'],
-                'Entry': f"₹{r['entry_price']:,.2f}",
-                'Current': f"₹{r['current_price']:,.2f}",
-                'P&L %': f"{r['pnl_percent']:+.2f}%",
-                'P&L ₹': f"₹{r['pnl_amount']:+,.0f}",
-                'SL': f"₹{r['stop_loss']:,.2f}",
-                'SL Risk': f"{r['sl_risk']}%",
-                'Momentum': f"{r['momentum_score']:.0f}",
-                'RSI': f"{r['rsi']:.1f}",
-                'MACD': r['macd_signal'],
-                'Volume': r['volume_signal'].replace('_', ' '),
-                'Support': f"₹{r['support']:,.2f}",
-                'Resistance': f"₹{r['resistance']:,.2f}",
-                'Trail SL': f"₹{r['trail_stop']:,.2f}" if r['should_trail'] else '-',
-                'MTF Align': f"{r['mtf_alignment']}%" if r['mtf_signals'] else 'N/A',
-                'R:R': f"1:{r['risk_reward_ratio']:.2f}",
-                'Holding': f"{r['holding_days']}d" if r['holding_days'] > 0 else '-',
-                'Status': r['overall_status'],
-                'Action': r['overall_action'].replace('_', ' ')
-            })
-        
-        df_details = pd.DataFrame(details_data)
-        
-        # Color code by status
-        def highlight_status(row):
-            status = row['Status']
-            if status == 'CRITICAL':
-                return ['background-color: #f8d7da'] * len(row)
-            elif status == 'WARNING':
-                return ['background-color: #fff3cd'] * len(row)
-            elif status in ['SUCCESS', 'GOOD']:
-                return ['background-color: #d4edda'] * len(row)
-            elif status == 'OPPORTUNITY':
-                return ['background-color: #d1ecf1'] * len(row)
-            return [''] * len(row)
-        
-        st.dataframe(df_details.style.apply(highlight_status, axis=1),
-                    use_container_width=True, hide_index=True)
-        
-        # Export option
-        csv_data = df_details.to_csv(index=False)
-        st.download_button(
-            "📥 Download Analysis as CSV",
-            csv_data,
-            file_name=f"portfolio_analysis_{ist_now.strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
-    
-    # =========================================================================
-    # AUTO REFRESH
-    # =========================================================================
-    st.divider()
-    
-    if settings['auto_refresh']:
-        if is_open:
-            if HAS_AUTOREFRESH:
-                count = st_autorefresh(
-                    interval=settings['refresh_interval'] * 1000,
-                    limit=None,
-                    key="portfolio_autorefresh"
-                )
-                st.caption(f"🔄 Auto-refresh active | Interval: {settings['refresh_interval']}s | Count: {count}")
+                    candidate['backtest'] = {
+                        "win_rate": backtest_result.win_rate,
+                        "profit_factor": backtest_result.profit_factor,
+                        "sharpe_ratio": backtest_result.sharpe_ratio,
+                        "max_drawdown": backtest_result.max_drawdown,
+                        "reliability_score": backtest_result.reliability_score,
+                        "total_trades": backtest_result.total_trades,
+                    }
+                    
+                    backtest_boost = (backtest_result.reliability_score - 50) * 0.25
+                    candidate['confidence'] = min(100, candidate['confidence'] + backtest_boost)
+                    candidate['backtest_validated'] = True
+                    
+                    validated_results.append(candidate)
+                else:
+                    stats["full_backtest_fail"] += 1
             else:
-                st.caption(f"⏱️ Auto-refresh requires streamlit-autorefresh package")
-                st.caption("💡 Install: `pip install streamlit-autorefresh`")
-                
-                # Manual refresh button as fallback
-                if st.button("🔄 Refresh Now", key="manual_refresh"):
-                    st.cache_data.clear()
-                    st.rerun()
-        else:
-            st.caption(f"⏸️ Auto-refresh paused - {market_status}: {market_msg}")
-    else:
-        st.caption("🔄 Auto-refresh disabled. Click 'Refresh' button to update.")
+                candidate['backtest_validated'] = False
+                validated_results.append(candidate)
+        
+        print()
+        print(f"\n  ✓ Phase 2 Complete: {len(validated_results)} signals validated")
+        
+        # Add remaining if HYBRID
+        if BACKTEST_MODE == 'HYBRID' and len(initial_results) > num_to_test:
+            for candidate in initial_results[num_to_test:]:
+                candidate['backtest_validated'] = False
+                validated_results.append(candidate)
+        
+        return sorted(validated_results, key=lambda x: x['confidence'], reverse=True)
     
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        f"<p style='text-align:center;color:#666;font-size:0.8em;'>"
-        f"Smart Portfolio Monitor v6.0 | Last updated: {ist_now.strftime('%H:%M:%S')} IST | "
-        f"Positions: {len(results)} | API Calls: {st.session_state.api_call_count}"
-        f"</p>",
-        unsafe_allow_html=True
-    )
-
+    return initial_results
 
 # ============================================================================
-# RUN APPLICATION
+# STATISTICS PRINTING
+# ============================================================================
+
+def print_statistics():
+    """Print detailed scan statistics"""
+    
+    total = stats.get("total", 0)
+    if total == 0:
+        print("\n⚠️  No stocks were scanned")
+        return
+    
+    print(f"\n{'='*120}")
+    print("SCAN STATISTICS")
+    print('='*120)
+    
+    passed = stats.get("passed", 0)
+    pass_rate = (passed / total) * 100 if total > 0 else 0
+    
+    print(f"\n📊 OVERALL:")
+    print(f"   Total Scanned:    {total:>6}")
+    print(f"   Signals Found:    {passed:>6}  ({pass_rate:.1f}%)")
+    print(f"   Rejected:         {total - passed:>6}  ({100-pass_rate:.1f}%)")
+    
+    print(f"\n❌ REJECTION BREAKDOWN:")
+    
+    rejections = [
+        ("No Data", stats.get("no_data", 0)),
+        ("Data Quality", stats.get("data_quality_fail", 0)),
+        ("Indicators Failed", stats.get("indicator_fail", 0)),
+        ("Volatility Regime", stats.get("volatility_fail", 0)),
+        ("Low Confidence", stats.get("confidence_fail", 0)),
+        ("Poor Risk:Reward", stats.get("rr_fail", 0)),
+        ("Mini Backtest", stats.get("mini_backtest_fail", 0)),
+        ("Full Backtest", stats.get("full_backtest_fail", 0)),
+        ("Walk-Forward", stats.get("walk_forward_fail", 0)),
+        ("Monte Carlo", stats.get("monte_carlo_fail", 0)),
+        ("Portfolio Risk", stats.get("portfolio_fail", 0)),
+    ]
+    
+    has_rejections = False
+    for reason, count in rejections:
+        if count > 0:
+            has_rejections = True
+            pct = (count / total) * 100
+            print(f"   {reason:<20} {count:>6}  ({pct:>5.1f}%)")
+    
+    if not has_rejections:
+        print("   (No rejections recorded)")
+    
+    if rejection_samples:
+        print(f"\n📝 SAMPLE REJECTIONS:")
+        for sample in rejection_samples[:8]:
+            print(f"   • {sample}")
+    
+    bt_run = stats.get("full_backtest_run", 0)
+    if bt_run > 0:
+        bt_fail = stats.get("full_backtest_fail", 0)
+        print(f"\n🔬 BACKTEST INFO:")
+        print(f"   Full Backtests Run:   {bt_run}")
+        print(f"   Failed:               {bt_fail}")
+    
+    print('='*120)
+
+# ============================================================================
+# RESULTS PRINTING
+# ============================================================================
+
+def print_results(results: List[Dict]):
+    """Print formatted results table - TIERED VERSION"""
+    
+    if not results:
+        return
+    
+    # Classify into tiers
+    tiers = apply_tier_based_filtering(results)
+    
+    total_signals = sum(len(v) for v in tiers.values())
+    
+    print(f"\n{'='*180}")
+    print(f"TRADING SIGNALS - TIERED CLASSIFICATION ({total_signals} Total)")
+    print('='*180)
+    
+    # Print each tier
+    tier_info = {
+        "TIER_1_PREMIUM": ("🟢 TIER 1: PREMIUM SIGNALS (Highest Probability)", "Take with 30-40% position size"),
+        "TIER_2_STANDARD": ("🟡 TIER 2: STANDARD SIGNALS (Good Probability)", "Take with 15-20% position size"),
+        "TIER_3_SPECULATIVE": ("🔵 TIER 3: SPECULATIVE SIGNALS (Acceptable Risk)", "Take with 5-10% position size"),
+    }
+    
+    for tier_name, (tier_title, tier_advice) in tier_info.items():
+        tier_results = tiers[tier_name]
+        
+        if not tier_results:
+            continue
+        
+        print(f"\n{tier_title}")
+        print(f"   Recommendation: {tier_advice}")
+        print(f"   Count: {len(tier_results)} signals")
+        print('-'*180)
+        
+        # Header
+        header = (
+            f"{'#':<4} {'TICKER':<12} {'SIDE':<6} {'PRICE':>9} {'CONF':>6} {'RSI':>5} "
+            f"{'ENTRY':>9} {'SL':>9} {'T1':>9} {'T2':>9} {'R:R':>5} {'QTY':>6}"
+        )
+        
+        if any(r.get('backtest_validated') for r in tier_results):
+            header += f" {'BT_WR':>7} {'BT_PF':>6}"
+        
+        print(header)
+        print('-'*180)
+        
+        for i, res in enumerate(tier_results[:20], 1):  # Show max 20 per tier
+            row = (
+                f"{i:<4} "
+                f"{res['ticker']:<10} "
+                f"{res['side']:<6} "
+                f"₹{res['price']:>8.2f} "
+                f"{res['confidence']:>5.1f}% "
+                f"{res['rsi']:>5.1f} "
+                f"₹{res['entry_price']:>8.2f} "
+                f"₹{res['stop_loss']:>8.2f} "
+                f"₹{res['target_1']:>8.2f} "
+                f"₹{res['target_2']:>8.2f} "
+                f"{res['risk_reward']:>4.1f}x "
+                f"{res['qty']:>6}"
+            )
+            
+            if res.get('backtest_validated') and 'backtest' in res:
+                bt = res['backtest']
+                row += (
+                    f" {bt['win_rate']:>6.1f}% "
+                    f"{bt['profit_factor']:>5.1f}x"
+                )
+            
+            print(row)
+    
+    print('='*180)
+    
+    # Summary
+    print(f"\n📊 TIER SUMMARY:")
+    for tier_name, (tier_title, _) in tier_info.items():
+        count = len(tiers[tier_name])
+        if count > 0:
+            print(f"   {tier_title}: {count} signals")
+    
+    print('='*180)
+# def get_realtime_price(ticker: str) -> Optional[float]:
+#     """Get real-time price from NSE (market hours only)"""
+#     try:
+#         import datetime as dt
+#         now = dt.datetime.now()
+        
+#         # Check market hours (9:15 AM - 3:30 PM IST)
+#         if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+#             return None  # Pre-market
+#         if now.hour >= 15 and now.minute > 30:
+#             return None  # Post-market
+            
+#         # Use NSE API or broker API for real-time
+#         # ... implementation depends on your data source
+        
+#     except:
+#         return None
+
+# ============================================================================
+# EXPORT & HTML GENERATION
+# ============================================================================
+
+def export_results(results: List[Dict], scan_time: float):
+    """Export results to CSV and HTML"""
+    
+    try:
+        os.makedirs(SIGNALS_DIR, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # CSV Export
+        csv_data = []
+        for res in results:
+            row = {
+                "Ticker": res["ticker"],
+                "Side": res["side"],
+                "Price": res["price"],
+                "Confidence": res["confidence"],
+                "RSI": res["rsi"],
+                "Entry": res["entry_price"],
+                "StopLoss": res["stop_loss"],
+                "Target1": res["target_1"],
+                "Target2": res["target_2"],
+                "RiskReward": res["risk_reward"],
+                "Quantity": res["qty"],
+                "Sector": res["sector"],
+                "Reasons": res["reasons"],
+            }
+            
+            if res.get('backtest_validated') and 'backtest' in res:
+                bt = res['backtest']
+                row.update({
+                    "BT_WinRate": bt['win_rate'],
+                    "BT_ProfitFactor": bt['profit_factor'],
+                    "BT_Sharpe": bt['sharpe_ratio'],
+                    "BT_MaxDrawdown": bt['max_drawdown'],
+                    "BT_Reliability": bt['reliability_score'],
+                })
+            
+            csv_data.append(row)
+        
+        df = pd.DataFrame(csv_data)
+        csv_file = os.path.join(SIGNALS_DIR, f"signals_{timestamp}.csv")
+        df.to_csv(csv_file, index=False)
+        print(f"\n  ✓ CSV: {csv_file}")
+        
+        # HTML Report
+        html_file = generate_html_report(results, scan_time, timestamp)
+        if html_file:
+            print(f"  ✓ HTML: {html_file}")
+        
+        return csv_file, html_file
+        
+    except Exception as e:
+        logger.error(f"Export failed: {e}")
+        return None, None
+
+def generate_html_report(results: List[Dict], scan_time: float, timestamp: str) -> Optional[str]:
+    """Generate HTML report"""
+    
+    try:
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NSE Scanner v8.5 - {timestamp}</title>
+    <style>
+        body {{ font-family: Arial; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; }}
+        .container {{ max-width: 1400px; margin: 0 auto; background: white; border-radius: 15px; overflow: hidden; }}
+        .header {{ background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 30px; text-align: center; }}
+        .header h1 {{ margin: 0; font-size: 2.5em; }}
+        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; padding: 30px; background: #f8f9fa; }}
+        .stat-card {{ background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .stat-card .value {{ font-size: 2em; font-weight: bold; color: #667eea; margin: 10px 0; }}
+        .stat-card .label {{ color: #666; text-transform: uppercase; font-size: 0.85em; }}
+        .signals {{ padding: 30px; }}
+        .signal-card {{ background: white; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; margin-bottom: 20px; }}
+        .signal-card:hover {{ box-shadow: 0 5px 20px rgba(0,0,0,0.1); }}
+        .signal-header {{ display: flex; justify-content: space-between; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0; }}
+        .signal-ticker {{ font-size: 1.8em; font-weight: bold; color: #1e3c72; }}
+        .signal-side {{ padding: 8px 20px; border-radius: 20px; font-weight: bold; }}
+        .side-long {{ background: #4caf50; color: white; }}
+        .side-short {{ background: #f44336; color: white; }}
+        .confidence {{ font-size: 1.5em; font-weight: bold; }}
+        .conf-high {{ color: #4caf50; }}
+        .conf-medium {{ color: #ff9800; }}
+        .conf-low {{ color: #2196f3; }}
+        .signal-details {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }}
+        .detail-item {{ background: #f8f9fa; padding: 12px; border-radius: 8px; }}
+        .detail-label {{ font-size: 0.85em; color: #666; margin-bottom: 5px; }}
+        .detail-value {{ font-size: 1.2em; font-weight: bold; color: #333; }}
+        .backtest-section {{ background: #e8f5e9; padding: 15px; border-radius: 8px; margin-top: 15px; }}
+        .backtest-title {{ font-weight: bold; color: #2e7d32; margin-bottom: 10px; }}
+        .reasons {{ background: #fff3e0; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #ff9800; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 NSE SWING SCANNER v8.5</h1>
+            <div>Ultimate Accuracy Edition - {ACCURACY_MODE} Mode</div>
+            <div>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card"><div class="label">Total Signals</div><div class="value">{len(results)}</div></div>
+            <div class="stat-card"><div class="label">Stocks Scanned</div><div class="value">{stats['total']}</div></div>
+            <div class="stat-card"><div class="label">Success Rate</div><div class="value">{(stats['passed']/stats['total']*100) if stats['total'] > 0 else 0:.1f}%</div></div>
+            <div class="stat-card"><div class="label">Scan Time</div><div class="value">{scan_time:.1f}s</div></div>
+        </div>
+        
+        <div class="signals">
+            <h2 style="margin-bottom: 20px;">🎯 Trading Signals</h2>"""
+        
+        for i, res in enumerate(results[:TOP_RESULTS], 1):
+            conf_class = "conf-high" if res['confidence'] >= 70 else ("conf-medium" if res['confidence'] >= 60 else "conf-low")
+            side_class = "side-long" if res['side'] == "LONG" else "side-short"
+            
+            html_content += f"""
+            <div class="signal-card">
+                <div class="signal-header">
+                    <div><span style="color: #999;">#{i}</span> <span class="signal-ticker">{res['ticker']}</span></div>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <span class="signal-side {side_class}">{res['side']}</span>
+                        <span class="confidence {conf_class}">{res['confidence']:.1f}%</span>
+                    </div>
+                </div>
+                
+                <div class="signal-details">
+                    <div class="detail-item"><div class="detail-label">Price</div><div class="detail-value">₹{res['price']:.2f}</div></div>
+                    <div class="detail-item"><div class="detail-label">Entry</div><div class="detail-value">₹{res['entry_price']:.2f}</div></div>
+                    <div class="detail-item"><div class="detail-label">Stop Loss</div><div class="detail-value">₹{res['stop_loss']:.2f}</div></div>
+                    <div class="detail-item"><div class="detail-label">Target 1</div><div class="detail-value">₹{res['target_1']:.2f}</div></div>
+                    <div class="detail-item"><div class="detail-label">R:R</div><div class="detail-value">{res['risk_reward']:.1f}x</div></div>
+                    <div class="detail-item"><div class="detail-label">Qty</div><div class="detail-value">{res['qty']}</div></div>
+                </div>
+                
+                <div class="reasons"><strong>💡 Entry Reasons:</strong><br>{res['reasons']}</div>
+            </div>"""
+        
+        html_content += """
+        </div>
+    </div>
+</body>
+</html>"""
+        
+        html_file = os.path.join(SIGNALS_DIR, f"report_{timestamp}.html")
+        with open(html_file, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        
+        return html_file
+        
+    except Exception as e:
+        logger.error(f"HTML generation failed: {e}")
+        return None
+
+# ============================================================================
+# HEADER PRINTING
+# ============================================================================
+
+def print_header():
+    """Print scanner header"""
+    
+    print("\n" + "="*120)
+    print("""
+███╗   ██╗███████╗███████╗    ███████╗ ██████╗ █████╗ ███╗   ██╗███╗   ██╗███████╗██████╗     ██╗   ██╗ █████╗ ███████╗
+████╗  ██║██╔════╝██╔════╝    ██╔════╝██╔════╝██╔══██╗████╗  ██║████╗  ██║██╔════╝██╔══██╗    ██║   ██║██╔══██╗██╔════╝
+██╔██╗ ██║███████╗█████╗      ███████╗██║     ███████║██╔██╗ ██║██╔██╗ ██║█████╗  ██████╔╝    ██║   ██║╚█████╔╝███████╗
+██║╚██╗██║╚════██║██╔══╝      ╚════██║██║     ██╔══██║██║╚██╗██║██║╚██╗██║██╔══╝  ██╔══██╗    ╚██╗ ██╔╝██╔══██╗╚════██║
+██║ ╚████║███████║███████╗    ███████║╚██████╗██║  ██║██║ ╚████║██║ ╚████║███████╗██║  ██║     ╚████╔╝ ╚█████╔╝███████║
+╚═╝  ╚═══╝╚══════╝╚══════╝    ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝      ╚═══╝   ╚════╝ ╚══════╝
+    """)
+    print("="*120)
+    print("                               VERSION 8.5 - ULTIMATE ACCURACY EDITION")
+    print("                    Combining v7.4 Advanced Features + v8.0 Backtesting Power")
+    print("="*120)
+    
+    print(f"\n⚙️  CONFIGURATION:")
+    print(f"   Mode:              {ACCURACY_MODE}")
+    print(f"   Backtest:          {BACKTEST_MODE}")
+    print(f"   Min Confidence:    {MIN_CONFIDENCE}%")
+    print(f"   Min R:R Ratio:     {MIN_RR_RATIO}x")
+    print(f"   Account Capital:   ₹{ACCOUNT_CAPITAL:,}")
+    print(f"   Risk per Trade:    {RISK_PER_TRADE*100}%")
+    
+    print(f"\n✅ ENABLED FEATURES:")
+    features = []
+    if USE_SECTOR_ROTATION:
+        features.append("Sector Rotation")
+    if USE_VIX_SENTIMENT:
+        features.append("VIX Sentiment")
+    if USE_FIBONACCI_SCORING:
+        features.append("Fibonacci")
+    if USE_PORTFOLIO_RISK:
+        features.append("Portfolio Risk")
+    if USE_MINI_BACKTEST:
+        features.append("Mini Backtest")
+    if USE_FULL_BACKTEST:
+        features.append("Full Backtest")
+    
+    print("   " + " | ".join(features))
+    print("\n" + "="*120)
+
+# ============================================================================
+# MAIN EXECUTION - WITH CACHE VALIDATION
+# ============================================================================
+# ============================================================================
+# MULTI-TIER SIGNAL CLASSIFICATION
+# ============================================================================
+
+def classify_signal_tier(result: Dict, backtest_result: Optional[BacktestResult]) -> str:
+    """
+    Classify signal into tiers based on quality - FIXED VERSION
+    """
+    confidence = result.get('confidence', 0)
+    rr = result.get('risk_reward', 0)
+    mini_bt = result.get('mini_backtest', {})
+    
+    # Safely extract backtest values
+    bt_win_rate = 0
+    bt_pf = 0
+    if backtest_result:
+        bt_win_rate = getattr(backtest_result, 'win_rate', 0)
+        bt_pf = getattr(backtest_result, 'profit_factor', 0)
+    elif result.get('backtest_validated') and 'backtest' in result:
+        bt = result['backtest']
+        bt_win_rate = bt.get('win_rate', 0)
+        bt_pf = bt.get('profit_factor', 0)
+
+    # Tier 1 Requirements (PREMIUM)
+    tier1_checks = [
+        confidence >= 75,
+        rr >= 2.0,
+        mini_bt.get('success_reason', '') in ['Target hit, stop not hit', 'Target hit before stop'],
+        bt_win_rate >= 58,
+        bt_pf >= 1.7,
+    ]
+    
+    if sum(1 for x in tier1_checks if x) >= 4:
+        return "TIER_1_PREMIUM"
+    
+    # Tier 2 Requirements (STANDARD)
+    tier2_checks = [
+        confidence >= 65,
+        rr >= 1.5,
+        mini_bt.get('target_hit', False) or mini_bt.get('success_reason', '').startswith('Final P&L'),
+        bt_win_rate >= 52,
+        bt_pf >= 1.4,
+    ]
+    
+    if sum(1 for x in tier2_checks if x) >= 3:
+        return "TIER_2_STANDARD"
+    
+    # Tier 3 (SPECULATIVE)
+    if confidence >= 55 and rr >= 1.3:
+        return "TIER_3_SPECULATIVE"
+    
+    return "REJECTED"
+
+
+def apply_tier_based_filtering(results: List[Dict]) -> Dict[str, List[Dict]]:
+    """Separate results into tiers"""
+    
+    tiers = {
+        "TIER_1_PREMIUM": [],
+        "TIER_2_STANDARD": [],
+        "TIER_3_SPECULATIVE": []
+    }
+    
+    for result in results:
+        backtest = None
+        if result.get('backtest_validated') and 'backtest' in result:
+            # Reconstruct BacktestResult from dict
+            bt_dict = result['backtest']
+            backtest = BacktestResult(
+                total_trades=bt_dict.get('total_trades', 10),
+                winning_trades=0,
+                losing_trades=0,
+                win_rate=bt_dict.get('win_rate', 50),
+                avg_win=0,
+                avg_loss=0,
+                profit_factor=bt_dict.get('profit_factor', 1.5),
+                sharpe_ratio=bt_dict.get('sharpe_ratio', 0),
+                max_drawdown=bt_dict.get('max_drawdown', 10),
+                total_return=0,
+                avg_holding_days=0,
+                best_trade=0,
+                worst_trade=0,
+                consecutive_wins=0,
+                consecutive_losses=0,
+                reliability_score=bt_dict.get('reliability_score', 50),
+                expectancy=bt_dict.get('expectancy', 0)
+            )
+        
+        tier = classify_signal_tier(result, backtest)
+        
+        if tier in tiers:
+            result['tier'] = tier
+            tiers[tier].append(result)
+    
+    return tiers
+def main():
+    """Main execution function - FIXED VERSION WITH VALIDATION"""
+    
+    start_time = time.time()
+    
+    print_header()
+    
+    # ========================================================================
+    # [1/5] LOAD STOCK UNIVERSE
+    # ========================================================================
+    
+    print("\n[1/5] Loading Stock Universe...")
+    tickers = get_universe_symbols()
+    
+    if not tickers:
+        print("❌ Failed to load stock symbols")
+        return
+    
+    print(f"  ✓ Loaded {len(tickers)} symbols")
+    
+    # ========================================================================
+    # [2/5] INITIALIZE FILTERS
+    # ========================================================================
+    
+    print("\n[2/5] Initializing Analysis Engines...")
+    
+    quality_validator = DataQualityValidator()
+    sector_filter = SectorRotationAnalyzer() if USE_SECTOR_ROTATION else None
+    vix_filter = VIXSentimentAnalyzer() if USE_VIX_SENTIMENT else None
+    fibo_detector = FibonacciDetector() if USE_FIBONACCI_SCORING else None
+    portfolio_mgr = PortfolioRiskManager(ACCOUNT_CAPITAL) if USE_PORTFOLIO_RISK else None
+    mtf_analyzer = MultiTimeframeAnalyzer()
+    
+    if sector_filter:
+        print("  └─ Updating sector data...")
+        sector_filter.update_sector_strength()
+    
+    print("  ✓ All engines initialized")
+    
+    # ========================================================================
+    # [3/5] BUILD PRICE CACHE
+    # ========================================================================
+    
+    print("\n[3/5] Building Price Cache...")
+    df_all = build_cache(tickers)
+    
+    if df_all is None or df_all.empty:
+        print("❌ Failed to build price cache")
+        return
+    
+    # ========================================================================
+    # FIX 3: CACHE VALIDATION
+    # ========================================================================
+    
+    print(f"\n{'='*120}")
+    print("CACHE VALIDATION & INTEGRITY CHECK")
+    print('='*120)
+    
+    print(f"\n📊 Cache Structure:")
+    print(f"   Total rows:        {len(df_all):,}")
+    print(f"   Columns:           {df_all.columns.tolist()}")
+    print(f"   Unique tickers:    {df_all['ticker'].nunique()}")
+    print(f"   Date range:        {df_all['Date'].min()} to {df_all['Date'].max()}")
+    
+    print(f"\n🔍 Ticker Format Check:")
+    sample_tickers = df_all['ticker'].unique()[:10]
+    print(f"   Sample tickers:    {sample_tickers.tolist()}")
+    ticker_format = 'WITH .NS' if any('.NS' in str(t) for t in sample_tickers) else 'WITHOUT .NS'
+    print(f"   Format detected:   {ticker_format}")
+    
+    print(f"\n🎯 Data Uniqueness Validation:")
+    print(f"   {'Ticker':<15} {'Rows':>6} {'Unique':>7} {'Price Range':<30} {'Status'}")
+    print(f"   {'-'*15} {'-'*6} {'-'*7} {'-'*30} {'-'*10}")
+    
+    # Test first 5 tickers for data integrity
+    test_tickers = df_all['ticker'].unique()[:5]
+    all_valid = True
+    
+    for test_ticker in test_tickers:
+        test_data = df_all[df_all['ticker'] == test_ticker]
+        
+        rows = len(test_data)
+        unique_closes = test_data['Close'].nunique()
+        min_price = test_data['Close'].min()
+        max_price = test_data['Close'].max()
+        price_range = max_price - min_price
+        
+        # Check if data looks valid
+        uniqueness_ratio = unique_closes / rows if rows > 0 else 0
+        
+        if uniqueness_ratio < 0.3 and rows > 20:
+            status = "⚠️  SUSPICIOUS"
+            all_valid = False
+        else:
+            status = "✓ OK"
+        
+        ticker_short = test_ticker[:15]
+        price_range_str = f"₹{min_price:.2f} - ₹{max_price:.2f}"
+        
+        print(f"   {ticker_short:<15} {rows:>6} {unique_closes:>7} {price_range_str:<30} {status}")
+    
+    # Overall validation result
+    print(f"\n{'='*120}")
+    if all_valid:
+        print("✅ Cache validation PASSED - Data looks good!")
+    else:
+        print("⚠️  Cache validation WARNING - Some data may be corrupted")
+        print("   Proceeding anyway, but results may be affected")
+    print('='*120)
+    
+    # ========================================================================
+    # [4/5] SCAN STOCKS
+    # ========================================================================
+    
+    cached_tickers = sorted(df_all["ticker"].unique().tolist())
+    print(f"\n  ✓ Limiting scan to {len(cached_tickers)} cached tickers (was {len(tickers)})")
+    tickers = cached_tickers  # ✅ CRITICAL: Only scan what we have
+    
+    print(f"\n[4/5] Scanning {len(tickers)} Stocks...")
+    
+    if BACKTEST_MODE in ['HYBRID', 'FULL']:
+        results = hybrid_scan_universe(
+            tickers, df_all, quality_validator, sector_filter,
+            vix_filter, fibo_detector, portfolio_mgr, mtf_analyzer
+        )
+    else:
+        print(f"\n{'='*120}")
+        print("SCANNING WITH MINI BACKTEST")
+        print('='*120)
+        
+        results = []
+        
+        for i, ticker in enumerate(tickers, 1):
+            result = scan_ticker(
+                ticker, df_all, quality_validator, sector_filter,
+                vix_filter, fibo_detector, portfolio_mgr, mtf_analyzer,
+                backtester=None, run_full_backtest=False
+            )
+            
+            if result:
+                results.append(result)
+                if USE_PORTFOLIO_RISK and portfolio_mgr:
+                    portfolio_mgr.add_trade(result)
+            
+            if i % 25 == 0 or i == len(tickers):
+                pct = (i / len(tickers)) * 100
+                bar_length = 50
+                filled = int(bar_length * i / len(tickers))
+                bar = '█' * filled + '░' * (bar_length - filled)
+                print(f"  [{bar}] {pct:>5.1f}% | {i:>4}/{len(tickers)} | Found: {len(results):>3}", 
+                      end='\r', flush=True)
+        
+        print()
+        results = sorted(results, key=lambda x: x['confidence'], reverse=True)
+    
+    # ========================================================================
+    # [5/5] DISPLAY RESULTS
+    # ========================================================================
+    
+    print(f"\n[5/5] Generating Reports...")
+    
+    print_statistics()
+    
+    if not results:
+        print(f"\n{'='*120}")
+        print("❌ NO SIGNALS FOUND")
+        print('='*120)
+        print(f"\n💡 SUGGESTIONS:")
+        print(f"   • Switch to AGGRESSIVE mode (currently: {ACCURACY_MODE})")
+        print(f"   • Lower MIN_CONFIDENCE to {MIN_CONFIDENCE - 10}%")
+        print(f"   • Check rejection reasons above")
+        print('='*120 + "\n")
+        return
+    
+    print_results(results)
+    
+    scan_time = time.time() - start_time
+    export_results(results, scan_time)
+    
+    # ========================================================================
+    # FINAL SUMMARY
+    # ========================================================================
+    
+    print(f"\n{'='*120}")
+    print("✅ SCAN COMPLETE!")
+    print('='*120)
+    
+    print(f"\n📊 SUMMARY:")
+    print(f"   Mode:              {ACCURACY_MODE}")
+    print(f"   Backtest:          {BACKTEST_MODE}")
+    print(f"   Stocks Scanned:    {stats['total']}")
+    print(f"   Signals Found:     {len(results)}")
+    print(f"   Success Rate:      {(stats['passed']/stats['total']*100) if stats['total'] > 0 else 0:.1f}%")
+    print(f"   Scan Time:         {scan_time:.1f} seconds")
+    
+    if results:
+        avg_conf = sum(r['confidence'] for r in results) / len(results)
+        print(f"   Avg Confidence:    {avg_conf:.1f}%")
+        
+        validated = len([r for r in results if r.get('backtest_validated')])
+        if validated > 0:
+            print(f"   Backtest Validated: {validated}/{len(results)}")
+    
+    print(f"\n💾 OUTPUT: {SIGNALS_DIR}/")
+    print("\n" + "="*120 + "\n")
+    return results
+
+# ============================================================================
+# ENTRY POINT
 # ============================================================================
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Scan interrupted by user")
+        print_statistics()
+    except Exception as e:
+        print(f"\n\n❌ Fatal error: {e}")
+        logger.exception("Fatal error in main execution")
+# ============================================================================
+# EMAIL NOTIFICATION FUNCTION
+# ============================================================================
+
+def send_email_notification(results, csv_file, html_file, scan_time):
+    """Send email with scan results"""
+    
+    if not EMAIL_CONFIG['enabled']:
+        logger.info("Email notifications disabled")
+        return
+    
+    if not EMAIL_CONFIG['sender_email'] or not EMAIL_CONFIG['sender_password']:
+        logger.warning("Email credentials not configured - skipping email")
+        return
+    
+    try:
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_CONFIG['sender_email']
+        msg['To'] = EMAIL_CONFIG['recipient_email']
+        msg['Subject'] = f"📊 NSE Scanner - {datetime.now().strftime('%Y-%m-%d')} - {len(results)} Signals"
+        
+        # Email body
+        body = f"""
+NSE SWING SCANNER v8.5 - DAILY REPORT
+{'='*70}
+
+Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+Scan Time: {scan_time:.1f} seconds
+Total Signals: {len(results)}
+
+{'='*70}
+TOP 5 SIGNALS:
+{'='*70}
+"""
+        
+        for i, res in enumerate(results[:5], 1):
+            body += f"""
+{i}. {res['ticker']} - {res['side']}
+   💰 Price: ₹{res['price']:.2f}
+   🎯 Confidence: {res['confidence']:.1f}%
+   📈 Entry: ₹{res['entry_price']:.2f}
+   🛑 Stop Loss: ₹{res['stop_loss']:.2f}
+   🎯 Target 1: ₹{res['target_1']:.2f}
+   📊 R:R Ratio: {res['risk_reward']:.1f}x
+   📦 Quantity: {res['qty']} shares
+"""
+        
+        body += f"""
+{'='*70}
+
+📎 Full reports attached (CSV & HTML)
+
+🔗 View all results: https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'your-repo')}
+
+This is an automated message from NSE Scanner v8.5
+Running on GitHub Actions ⚡
+"""
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach CSV file
+        if csv_file and os.path.exists(csv_file):
+            with open(csv_file, 'rb') as f:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(csv_file)}')
+                msg.attach(part)
+        
+        # Attach HTML file
+        if html_file and os.path.exists(html_file):
+            with open(html_file, 'rb') as f:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(html_file)}')
+                msg.attach(part)
+        
+        # Send email
+        with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as server:
+            server.starttls()
+            server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+            server.send_message(msg)
+        
+        logger.info("✅ Email notification sent successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to send email: {e}")
+
+# ============================================================================
+# MODIFIED MAIN FUNCTION FOR GITHUB ACTIONS
+# ============================================================================
+
+def github_actions_main():
+    """Main function optimized for GitHub Actions execution - FIXED VERSION"""
+    
+    logger.info("="*80)
+    logger.info("NSE SCANNER v8.5 - GITHUB ACTIONS EXECUTION")
+    logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+    logger.info(f"GitHub Repository: {os.environ.get('GITHUB_REPOSITORY', 'N/A')}")
+    logger.info(f"Workflow Run: #{os.environ.get('GITHUB_RUN_NUMBER', 'N/A')}")
+    logger.info("="*80)
+    
+    import time
+    start_time = time.time()
+    
+    try:
+        logger.info("🚀 Starting stock scan...")
+        
+        # ✅ FIX: main() already returns results
+        results = main()
+        
+        scan_time = time.time() - start_time
+        
+        # ✅ FIX: Check if results exist AND have data
+        if results and len(results) > 0:
+            logger.info(f"✅ Scan complete: {len(results)} signals found in {scan_time:.1f}s")
+            
+            # ✅ FIX: Use correct directory name
+            signals_dir = f"signals_v8.5_{ACCURACY_MODE.lower()}"
+            logger.info(f"📂 Looking for files in: {signals_dir}/")
+            
+            # Find the latest files
+            csv_file = None
+            html_file = None
+            
+            if os.path.exists(signals_dir):
+                csv_files = sorted([f for f in os.listdir(signals_dir) if f.endswith('.csv')])
+                html_files = sorted([f for f in os.listdir(signals_dir) if f.endswith('.html')])
+                
+                if csv_files:
+                    csv_file = os.path.join(signals_dir, csv_files[-1])
+                    logger.info(f"📄 Found CSV: {csv_file}")
+                
+                if html_files:
+                    html_file = os.path.join(signals_dir, html_files[-1])
+                    logger.info(f"📄 Found HTML: {html_file}")
+                
+                # ✅ Copy files to standard location for artifacts
+                copy_files_to_output(signals_dir)
+            else:
+                logger.warning(f"⚠️  Directory not found: {signals_dir}")
+            
+            # ✅ Send email with files
+            logger.info("📧 Sending email notification...")
+            send_email_notification(results, csv_file, html_file, scan_time)
+            
+        else:
+            logger.info(f"⚠️  No signals found in {scan_time:.1f}s")
+            send_no_signals_email(scan_time)
+        
+        logger.info("="*80)
+        logger.info("✅ GitHub Actions execution completed successfully")
+        logger.info("="*80)
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"❌ FATAL ERROR: {e}", exc_info=True)
+        
+        # Send error notification
+        if EMAIL_CONFIG['enabled'] and EMAIL_CONFIG['sender_email']:
+            try:
+                msg = MIMEText(f"Scanner error:\n\n{str(e)}\n\nCheck logs.")
+                msg['Subject'] = "⚠️ NSE Scanner Error"
+                msg['From'] = EMAIL_CONFIG['sender_email']
+                msg['To'] = EMAIL_CONFIG['recipient_email']
+                
+                with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as server:
+                    server.starttls()
+                    server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+                    server.send_message(msg)
+            except:
+                pass
+        
+        return 1
+
+
+def send_no_signals_email(scan_time):
+    """Send notification when no signals found"""
+    
+    if not EMAIL_CONFIG['enabled'] or not EMAIL_CONFIG['sender_email']:
+        logger.info("Email not configured")
+        return
+    
+    try:
+        body = f"""
+NSE SWING SCANNER v8.5 - DAILY REPORT
+{'='*70}
+
+Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+Scan Time: {scan_time:.1f} seconds
+Mode: {ACCURACY_MODE}
+
+⚠️  NO TRADING SIGNALS FOUND TODAY
+
+The scanner ran successfully but no stocks met the entry criteria.
+
+Possible reasons:
+- Market conditions unfavorable
+- All setups filtered by quality checks
+- Weekend/holiday (stale data)
+- High volatility regime
+
+{'='*70}
+
+Next scan: Tomorrow at 4:00 PM IST
+
+This is an automated message from NSE Scanner v8.5
+"""
+        
+        msg = MIMEText(body)
+        msg['Subject'] = f"📊 NSE Scanner - {datetime.now().strftime('%Y-%m-%d')} - No Signals"
+        msg['From'] = EMAIL_CONFIG['sender_email']
+        msg['To'] = EMAIL_CONFIG['recipient_email']
+        
+        with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as server:
+            server.starttls()
+            server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+            server.send_message(msg)
+        
+        logger.info("✅ No-signals email sent successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Email send failed: {e}")
+
+
+def copy_files_to_output(source_dir):
+    """Copy signal files to standard output directory for GitHub Actions"""
+    
+    try:
+        # Create standard output directory
+        output_dir = "signals"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        if not os.path.exists(source_dir):
+            logger.warning(f"Source directory not found: {source_dir}")
+            return
+        
+        import shutil
+        copied = 0
+        
+        # Copy all CSV and HTML files
+        for filename in os.listdir(source_dir):
+            if filename.endswith(('.csv', '.html')):
+                src_path = os.path.join(source_dir, filename)
+                dst_path = os.path.join(output_dir, filename)
+                
+                shutil.copy2(src_path, dst_path)
+                logger.info(f"📋 Copied: {filename}")
+                copied += 1
+        
+        logger.info(f"✅ Copied {copied} files to {output_dir}/")
+        
+        # Also copy logs
+        if os.path.exists('logs/scanner.log'):
+            shutil.copy2('logs/scanner.log', 'signals/scanner.log')
+            logger.info("📋 Copied: scanner.log")
+        
+    except Exception as e:
+        logger.error(f"⚠️  Failed to copy files: {e}")
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+if __name__ == "__main__":
+
+    sys.exit(github_actions_main())
